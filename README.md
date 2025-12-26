@@ -1,0 +1,2 @@
+# DocDetect
+OCR+Barcode decoder.
