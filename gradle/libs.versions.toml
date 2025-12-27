@@ -11,6 +11,8 @@ cameraX = "1.3.1"
 mlkitTextRecognition = "16.0.1"
 mlkitTextRecognitionChinese = "16.0.1"
 mlkitBarcodeScanning = "17.3.0"
+arcore = "1.45.0"
+opencv = "4.10.0"
 
 [libraries]
 camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "cameraX" }
@@ -20,6 +22,8 @@ camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
 mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version.ref = "mlkitTextRecognitionChinese" }
 mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcodeScanning" }
+arcore = { group = "com.google.ar", name = "core", version.ref = "arcore" }
+opencv = { group = "org.opencv", name = "opencv", version.ref = "opencv" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
