@@ -1,0 +1,6 @@
+
+1、使用时将文件名.bak去除
+
+模型地址：
+
+https://github.com/pynicolas/fairscan-segmentation-model

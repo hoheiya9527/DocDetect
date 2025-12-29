@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">面单检测器</string>
+    
+    <!-- Common -->
+    <string name="ok">确定</string>
+    <string name="cancel">取消</string>
+    <string name="retry">重试</string>
+    <string name="apply">应用</string>
+    <string name="complete">完成</string>
+    <string name="capture">捕获</string>
+    <string name="settings">设置</string>
+    <string name="error">错误</string>
+    <string name="loading">加载中…</string>
+    <string name="selected">已选中</string>
+    <string name="content_type">内容类型</string>
+    <string name="initializing">正在初始化…</string>
+    
+    <!-- Camera -->
+    <string name="camera_settings">设置</string>
+    <string name="resolution">分辨率</string>
+    <string name="focus_mode">对焦模式</string>
+    <string name="exposure_compensation">曝光补偿</string>
+    <string name="iso">ISO</string>
+    
+    <!-- Guidance -->
+    <string name="guidance_preview">请将相机对准面单标签</string>
+    <string name="guidance_detecting">正在检测标签…</string>
+    <string name="guidance_extracting">正在提取内容…</string>
+    <string name="guidance_selecting">点击选择需要提取的内容区域</string>
+    <string name="guidance_no_content">未检测到内容</string>
+    
+    <!-- Errors -->
+    <string name="error_camera_unavailable">相机不可用</string>
+    <string name="error_camera_permission">需要相机权限</string>
+    <string name="error_model_load">加载检测模型失败</string>
+    <string name="error_no_content">未检测到内容</string>
+    <string name="error_opencv_init">OpenCV初始化失败</string>
+    <string name="error_processing">处理失败</string>
+    
+    <!-- Results -->
+    <string name="extraction_result">提取结果</string>
+    <string name="select_at_least_one">请至少选择一个内容区域</string>
+    
+    <!-- Main -->
+    <string name="label_scan">面单扫描</string>
+    <string name="label_scan_description">扫描面单标签，提取文字和条码内容</string>
+</resources>

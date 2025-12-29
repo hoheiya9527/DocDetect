@@ -3,17 +3,22 @@ plugins {
 }
 
 android {
-    namespace 'com.example.docdetect'
-    compileSdk 35
+    namespace 'com.urovo.templatedetector'
+    compileSdk 36
 
     defaultConfig {
-        applicationId "com.example.docdetect"
-        minSdk 26
-        targetSdk 35
+        applicationId "com.urovo.templatedetector"
+        minSdk 24
+        targetSdk 36
         versionCode 1
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // 支持的ABI (仅64位)
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
     }
 
     buildTypes {
@@ -22,33 +27,53 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-
-    buildFeatures {
-        viewBinding true
+    
+    packagingOptions {
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+    // 不压缩tflite模型文件
+    androidResources {
+        noCompress 'tflite', 'nb'
     }
 }
 
 dependencies {
+
+    api fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+    api project(':PaddleOCR')
+//    implementation project(':KydDecoder')
+
+    // CameraX
+    implementation libs.camera.core
+    implementation libs.camera.camera2
+    implementation libs.camera.lifecycle
+    implementation libs.camera.view
+
+    // TensorFlow Lite
+    implementation libs.tensorflow.lite
+    implementation libs.tensorflow.lite.gpu
+    implementation libs.tensorflow.lite.gpu.api
+    implementation libs.tensorflow.lite.support
+
+    // MLKit
+    implementation libs.mlkit.barcode.scanning
+    // 如果上面的依赖不生效，可以使用下面的直接依赖
+    // implementation 'com.google.mlkit:barcode-scanning:17.3.0'
+
+    // AndroidX
     implementation libs.appcompat
     implementation libs.material
     implementation libs.activity
     implementation libs.constraintlayout
 
-    implementation libs.camera.core
-    implementation libs.camera.camera2
-    implementation libs.camera.lifecycle
-    implementation libs.camera.view
-    implementation libs.mlkit.text.recognition
-    implementation libs.mlkit.text.recognition.chinese
-    implementation libs.mlkit.barcode.scanning
-    implementation libs.arcore
-    implementation libs.opencv
-
+    // Test
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
