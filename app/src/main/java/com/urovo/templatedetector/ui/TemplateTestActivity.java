@@ -1,0 +1,678 @@
+package com.urovo.templatedetector.ui;
+
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.PointF;
+import android.graphics.RectF;
+import android.os.Bundle;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ImageView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.activity.EdgeToEdge;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.google.android.material.chip.Chip;
+import com.urovo.templatedetector.R;
+import com.urovo.templatedetector.camera.CameraController;
+import com.urovo.templatedetector.detector.LabelDetector;
+import com.urovo.templatedetector.init.AppInitializer;
+import com.urovo.templatedetector.matcher.RegionContentRecognizer;
+import com.urovo.templatedetector.matcher.TemplateMatchingService;
+import com.urovo.templatedetector.matcher.TemplateRepository;
+import com.urovo.templatedetector.model.CameraSettings;
+import com.urovo.templatedetector.model.DetectionResult;
+import com.urovo.templatedetector.model.MatchResult;
+import com.urovo.templatedetector.model.Template;
+import com.urovo.templatedetector.util.ImageEnhancer;
+import com.urovo.templatedetector.view.CameraPreviewLayout;
+import com.urovo.templatedetector.view.CameraSettingsDialog;
+import com.urovo.templatedetector.view.OverlayView;
+
+import org.opencv.core.Core;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfPoint2f;
+import org.opencv.core.Point;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+/**
+ * 模板测试界面
+ * 上半屏预览，下半屏显示匹配结果
+ * 文档置信度足够时自动触发模板匹配
+ */
+public class TemplateTestActivity extends AppCompatActivity {
+
+    private static final String TAG = "TemplateTestActivity";
+    private static final int REQUEST_CAMERA_PERMISSION = 100;
+    public static final String EXTRA_TEMPLATE_ID = "template_id";
+
+    private CameraPreviewLayout cameraPreviewLayout;
+    private ImageView imageViewStatus;
+    private TextView textViewTemplateName;
+    private Chip chipConfidence;
+    private RecyclerView recyclerViewRegions;
+    private TextView textViewWaiting;
+
+    private CameraController cameraController;
+    private LabelDetector labelDetector;
+    private TemplateMatchingService matchingService;
+    private TemplateRepository repository;
+    private RegionContentRecognizer contentRecognizer;
+
+    private long templateId = -1;
+    private Template template;
+    private boolean isMultiTemplateMode = false; // 多模板匹配模式
+
+    private volatile boolean isProcessingFrame = false;
+    private volatile boolean isMatching = false;
+    private DetectionResult lastDetectionResult;
+    private byte[] capturedRgbaData;
+    private int capturedWidth, capturedHeight, capturedRotation;
+
+    private double autoMatchThreshold = 0.95; // 从设置中读取
+    private static final int STABLE_FRAME_COUNT = 3;
+    private int stableFrameCounter = 0;
+
+    private MatchResult currentMatchResult;
+    private Bitmap matchedBitmap;
+    private RegionContentAdapter regionAdapter;
+
+    // 保存透视变换的逆矩阵，用于将校正后坐标变换回原始画面
+    private Mat inversePerspectiveMatrix;
+    // 保存旋转后图像尺寸，用于坐标缩放到模型坐标系
+    private int lastRotatedWidth, lastRotatedHeight;
+
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        EdgeToEdge.enable(this);
+        setContentView(R.layout.activity_template_test);
+
+        templateId = getIntent().getLongExtra(EXTRA_TEMPLATE_ID, -1);
+
+        if (!initServices()) return;
+
+        initViews();
+
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
+            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
+            return insets;
+        });
+
+        loadTemplate();
+
+        if (checkCameraPermission()) {
+            initCamera();
+        } else {
+            requestCameraPermission();
+        }
+    }
+
+    private boolean initServices() {
+        AppInitializer initializer = AppInitializer.getInstance(this);
+        if (!initializer.isInitialized()) {
+            Toast.makeText(this, R.string.initializing, Toast.LENGTH_LONG).show();
+            finish();
+            return false;
+        }
+
+        labelDetector = initializer.getLabelDetector();
+        matchingService = initializer.getTemplateMatchingService();
+        repository = TemplateRepository.getInstance(this);
+        contentRecognizer = new RegionContentRecognizer(
+                initializer.getOcrEngine(),
+                initializer.getBarcodeDecoder()
+        );
+        return true;
+    }
+
+    private void initViews() {
+        cameraPreviewLayout = findViewById(R.id.cameraPreviewLayout);
+        imageViewStatus = findViewById(R.id.imageViewStatus);
+        textViewTemplateName = findViewById(R.id.textViewTemplateName);
+        chipConfidence = findViewById(R.id.chipConfidence);
+        recyclerViewRegions = findViewById(R.id.recyclerViewRegions);
+        textViewWaiting = findViewById(R.id.textViewWaiting);
+
+        regionAdapter = new RegionContentAdapter();
+        recyclerViewRegions.setLayoutManager(new LinearLayoutManager(this));
+        recyclerViewRegions.setAdapter(regionAdapter);
+
+        cameraPreviewLayout.setConfidenceIndicatorVisible(true);
+        cameraPreviewLayout.setOnSettingsClickListener(this::showSettingsDialog);
+
+        showWaitingState();
+    }
+
+    private void loadTemplate() {
+        isMultiTemplateMode = (templateId <= 0);
+
+        if (isMultiTemplateMode) {
+            // 多模板匹配模式
+            textViewTemplateName.setText(R.string.content_recognition);
+        } else {
+            // 指定模板匹配模式
+            template = repository.getTemplateWithRegions(templateId);
+            if (template == null) {
+                Toast.makeText(this, R.string.template_not_found, Toast.LENGTH_SHORT).show();
+                finish();
+                return;
+            }
+            textViewTemplateName.setText(template.getName());
+        }
+    }
+
+    private void initCamera() {
+        cameraController = new CameraController(this);
+        cameraController.setFrameCallback(this::processFrame);
+        cameraPreviewLayout.setCameraController(cameraController, this);
+
+        // 从设置中读取自动匹配阈值和图像增强配置
+        CameraSettings settings = cameraController.getCurrentSettings();
+        if (settings != null) {
+            autoMatchThreshold = settings.getConfidenceThreshold();
+            // 同步图像增强设置到内容识别器
+            contentRecognizer.setEnableEnhance(settings.getEnhanceConfig().isEnableEnhance());
+        }
+    }
+
+    private void processFrame(androidx.camera.core.ImageProxy image, int rotationDegrees) {
+        if (isProcessingFrame || isMatching) {
+            image.close();
+            return;
+        }
+
+        isProcessingFrame = true;
+
+        try {
+            byte[] rgbaData = ImageEnhancer.extractRgba(image);
+            if (rgbaData == null) {
+                image.close();
+                isProcessingFrame = false;
+                return;
+            }
+
+            int width = image.getWidth();
+            int height = image.getHeight();
+
+            DetectionResult result = labelDetector.detect(image, rotationDegrees);
+
+            if (result != null && result.isDetected() && result.getConfidence() > 0.5) {
+                lastDetectionResult = result;
+                capturedRgbaData = rgbaData;
+                capturedWidth = width;
+                capturedHeight = height;
+                capturedRotation = rotationDegrees;
+
+                int rotatedWidth = (rotationDegrees == 90 || rotationDegrees == 270) ? height : width;
+                int rotatedHeight = (rotationDegrees == 90 || rotationDegrees == 270) ? width : height;
+                double confidence = result.getConfidence();
+
+                runOnUiThread(() -> {
+                    cameraPreviewLayout.setFillCenterCoordinates(result.getModelWidth(), result.getModelHeight(),
+                            rotatedWidth, rotatedHeight);
+                    cameraPreviewLayout.showDetectionBox(result.getBoundingBox(), result.getCornerPoints());
+                    cameraPreviewLayout.updateConfidence(confidence);
+                });
+
+                if (!isMatching && confidence >= autoMatchThreshold) {
+                    stableFrameCounter++;
+                    if (stableFrameCounter >= STABLE_FRAME_COUNT) {
+                        stableFrameCounter = 0;
+                        triggerAutoMatch();
+                    }
+                } else if (confidence < autoMatchThreshold) {
+                    stableFrameCounter = 0;
+                }
+            } else {
+                stableFrameCounter = 0;
+                runOnUiThread(() -> {
+                    cameraPreviewLayout.clearContentRegions();
+                    cameraPreviewLayout.hideDetectionBox();
+                    cameraPreviewLayout.updateConfidence(0);
+                });
+            }
+        } catch (Exception e) {
+            Log.e(TAG, ">> Frame processing failed", e);
+        } finally {
+            image.close();
+            isProcessingFrame = false;
+        }
+    }
+
+
+    private void triggerAutoMatch() {
+        if (isMatching || lastDetectionResult == null || capturedRgbaData == null) return;
+
+        isMatching = true;
+
+        // 首次匹配时显示"匹配中"状态，后续匹配保持当前结果显示
+        final boolean isFirstMatch = (currentMatchResult == null);
+        if (isFirstMatch) {
+            runOnUiThread(this::showMatchingState);
+        }
+
+        // 保存当前帧数据的副本，避免被后续帧覆盖
+        final byte[] frameData = capturedRgbaData;
+        final int frameWidth = capturedWidth;
+        final int frameHeight = capturedHeight;
+        final int frameRotation = capturedRotation;
+        final DetectionResult frameDetection = lastDetectionResult;
+
+        new Thread(() -> {
+            Mat colorMat = null;
+            Mat rotatedMat = null;
+            LabelDetector.CorrectionResult correctionResult = null;
+            Bitmap newBitmap = null;
+            MatchResult newResult = null;
+            Mat newInverseMatrix = null;
+
+            try {
+                colorMat = ImageEnhancer.rgbaToColorMat(frameData, frameWidth, frameHeight);
+                if (colorMat == null) {
+                    if (isFirstMatch) runOnUiThread(this::showWaitingState);
+                    isMatching = false;
+                    return;
+                }
+
+                rotatedMat = ImageEnhancer.rotateMat(colorMat, frameRotation);
+
+                // 使用新方法获取校正结果和变换矩阵
+                correctionResult = labelDetector.extractAndCorrectMatWithTransform(rotatedMat, frameDetection);
+
+                if (correctionResult == null || correctionResult.correctedMat == null) {
+                    if (isFirstMatch) runOnUiThread(this::showWaitingState);
+                    isMatching = false;
+                    return;
+                }
+
+                // 计算逆变换矩阵（从校正后坐标到原始画面坐标）
+                newInverseMatrix = correctionResult.perspectiveMatrix.inv();
+
+                // 直接使用 Mat 进行模板匹配
+                newResult = isMultiTemplateMode
+                        ? matchingService.matchAllFromMat(correctionResult.correctedMat)
+                        : matchingService.matchTemplateFromMat(correctionResult.correctedMat, templateId);
+
+                // 只有匹配成功且需要内容识别时才转换为 Bitmap
+                if (newResult.isSuccess() && newResult.getTransformedRegions() != null
+                        && !newResult.getTransformedRegions().isEmpty()) {
+                    newBitmap = ImageEnhancer.matToBitmap(correctionResult.correctedMat);
+                    if (newBitmap != null) {
+                        contentRecognizer.recognizeAll(newBitmap, newResult.getTransformedRegions());
+                    }
+                }
+
+                // 匹配成功或首次匹配时更新结果
+                final MatchResult resultToShow = newResult;
+                final Bitmap bitmapToKeep = newBitmap;
+                final Mat inverseMatrixToKeep = newInverseMatrix;
+                // 保存旋转后图像尺寸
+                final int rotatedW = (frameRotation == 90 || frameRotation == 270) ? frameHeight : frameWidth;
+                final int rotatedH = (frameRotation == 90 || frameRotation == 270) ? frameWidth : frameHeight;
+
+                runOnUiThread(() -> {
+                    // 释放旧结果
+                    releaseMatchResult();
+                    // 更新为新结果
+                    currentMatchResult = resultToShow;
+                    matchedBitmap = bitmapToKeep;
+                    inversePerspectiveMatrix = inverseMatrixToKeep;
+                    lastRotatedWidth = rotatedW;
+                    lastRotatedHeight = rotatedH;
+                    showMatchResult();
+                });
+
+                // 标记不要在 finally 中释放
+                newBitmap = null;
+                newResult = null;
+                newInverseMatrix = null;
+
+                // 延迟解除匹配锁，避免过于频繁的匹配
+                recyclerViewRegions.postDelayed(() -> isMatching = false, 500);
+
+            } catch (Exception e) {
+                Log.e(TAG, ">> Match failed", e);
+                if (isFirstMatch) runOnUiThread(this::showWaitingState);
+                isMatching = false;
+            } finally {
+                if (colorMat != null) colorMat.release();
+                if (rotatedMat != null && rotatedMat != colorMat) rotatedMat.release();
+                if (correctionResult != null) {
+                    if (correctionResult.correctedMat != null)
+                        correctionResult.correctedMat.release();
+                    if (correctionResult.perspectiveMatrix != null)
+                        correctionResult.perspectiveMatrix.release();
+                }
+                if (newBitmap != null && !newBitmap.isRecycled()) newBitmap.recycle();
+                if (newResult != null) newResult.release();
+                if (newInverseMatrix != null) newInverseMatrix.release();
+            }
+        }).start();
+    }
+
+    private void showWaitingState() {
+        imageViewStatus.setImageResource(R.drawable.ic_waiting);
+        imageViewStatus.setColorFilter(getColor(R.color.content_not_recognized));
+        chipConfidence.setVisibility(View.GONE);
+        recyclerViewRegions.setVisibility(View.GONE);
+        textViewWaiting.setVisibility(View.VISIBLE);
+        textViewWaiting.setText(R.string.guidance_preview);
+        cameraPreviewLayout.clearContentRegions();
+    }
+
+    private void showMatchingState() {
+        imageViewStatus.setImageResource(R.drawable.ic_waiting);
+        imageViewStatus.setColorFilter(getColor(R.color.confidence_medium));
+        chipConfidence.setVisibility(View.GONE);
+        recyclerViewRegions.setVisibility(View.GONE);
+        textViewWaiting.setVisibility(View.VISIBLE);
+        textViewWaiting.setText(R.string.template_matching);
+    }
+
+    private void showMatchResult() {
+        if (currentMatchResult == null) {
+            showWaitingState();
+            return;
+        }
+
+        textViewWaiting.setVisibility(View.GONE);
+        recyclerViewRegions.setVisibility(View.VISIBLE);
+
+        if (currentMatchResult.isSuccess()) {
+            imageViewStatus.setImageResource(R.drawable.ic_check);
+            imageViewStatus.setColorFilter(getColor(R.color.confidence_high));
+
+            // 多模板模式下显示匹配到的模板名称
+            if (isMultiTemplateMode && currentMatchResult.getTemplate() != null) {
+                textViewTemplateName.setText(currentMatchResult.getTemplate().getName());
+            }
+
+            float confidence = currentMatchResult.getConfidence();
+            chipConfidence.setText(String.format(Locale.getDefault(), "%.1f%%", confidence * 100));
+            chipConfidence.setChipBackgroundColorResource(
+                    confidence > 0.7f ? R.color.confidence_high :
+                            confidence > 0.5f ? R.color.confidence_medium : R.color.confidence_low);
+            chipConfidence.setVisibility(View.VISIBLE);
+
+            regionAdapter.setRegions(currentMatchResult.getTransformedRegions());
+
+            // 在预览中显示内容区域蓝框
+            updateContentRegionsOverlay(currentMatchResult.getTransformedRegions());
+        } else {
+            imageViewStatus.setImageResource(R.drawable.ic_warning);
+            imageViewStatus.setColorFilter(getColor(R.color.confidence_low));
+
+            if (isMultiTemplateMode) {
+                textViewTemplateName.setText(R.string.content_recognition);
+            }
+
+            chipConfidence.setText(R.string.template_no_match);
+            chipConfidence.setChipBackgroundColorResource(R.color.confidence_low);
+            chipConfidence.setVisibility(View.VISIBLE);
+            regionAdapter.setRegions(null);
+
+            // 清除内容区域显示
+            cameraPreviewLayout.clearContentRegions();
+        }
+    }
+
+    /**
+     * 更新预览中的内容区域蓝框显示
+     * 将校正后图像的区域坐标变换回原始画面坐标，再缩放到模型坐标系
+     */
+    private void updateContentRegionsOverlay(List<MatchResult.TransformedRegion> regions) {
+        if (regions == null || regions.isEmpty() || inversePerspectiveMatrix == null) {
+            cameraPreviewLayout.clearContentRegions();
+            return;
+        }
+
+        // 获取模型尺寸（用于坐标缩放）
+        DetectionResult detection = lastDetectionResult;
+        if (detection == null) {
+            cameraPreviewLayout.clearContentRegions();
+            return;
+        }
+
+        int modelWidth = detection.getModelWidth();
+        int modelHeight = detection.getModelHeight();
+
+        // 计算从旋转后图像坐标到模型坐标的缩放比例
+        float scaleX = (float) modelWidth / lastRotatedWidth;
+        float scaleY = (float) modelHeight / lastRotatedHeight;
+
+        List<OverlayView.ContentRegion> overlayRegions = new ArrayList<>();
+        for (MatchResult.TransformedRegion region : regions) {
+            PointF[] corners = region.getTransformedCorners();
+            if (corners == null || corners.length != 4) {
+                continue;
+            }
+
+            // 使用逆透视变换将校正后坐标变换回旋转后图像坐标
+            PointF[] imageCorners = transformPointsWithMatrix(corners, inversePerspectiveMatrix);
+            if (imageCorners == null) {
+                continue;
+            }
+
+            // 缩放到模型坐标系
+            PointF[] modelCorners = new PointF[4];
+            for (int i = 0; i < 4; i++) {
+                modelCorners[i] = new PointF(
+                        imageCorners[i].x * scaleX,
+                        imageCorners[i].y * scaleY
+                );
+            }
+
+            // 计算边界框
+            RectF modelBounds = calculateBoundsFromCorners(modelCorners);
+
+            overlayRegions.add(new OverlayView.ContentRegion(
+                    String.valueOf(region.getRegion().getId()),
+                    modelBounds,
+                    modelCorners,
+                    region.getRegion().getName(),
+                    region.hasContent()
+            ));
+        }
+        cameraPreviewLayout.setContentRegions(overlayRegions);
+    }
+
+    /**
+     * 使用透视变换矩阵变换点坐标
+     */
+    private PointF[] transformPointsWithMatrix(PointF[] points, Mat matrix) {
+        if (points == null || matrix == null || matrix.empty()) {
+            return null;
+        }
+
+        try {
+            // 构建源点
+            MatOfPoint2f srcPoints = new MatOfPoint2f();
+            Point[] cvPoints = new Point[points.length];
+            for (int i = 0; i < points.length; i++) {
+                cvPoints[i] = new Point(points[i].x, points[i].y);
+            }
+            srcPoints.fromArray(cvPoints);
+
+            // 透视变换
+            MatOfPoint2f dstPoints = new MatOfPoint2f();
+            Core.perspectiveTransform(srcPoints, dstPoints, matrix);
+
+            // 转换结果
+            Point[] transformedPoints = dstPoints.toArray();
+            PointF[] result = new PointF[transformedPoints.length];
+            for (int i = 0; i < transformedPoints.length; i++) {
+                result[i] = new PointF((float) transformedPoints[i].x, (float) transformedPoints[i].y);
+            }
+
+            srcPoints.release();
+            dstPoints.release();
+
+            return result;
+        } catch (Exception e) {
+            Log.e(TAG, "transformPointsWithMatrix failed", e);
+            return null;
+        }
+    }
+
+    /**
+     * 从四角点计算边界框
+     */
+    private RectF calculateBoundsFromCorners(PointF[] corners) {
+        float minX = Float.MAX_VALUE, maxX = Float.MIN_VALUE;
+        float minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
+
+        for (PointF corner : corners) {
+            minX = Math.min(minX, corner.x);
+            maxX = Math.max(maxX, corner.x);
+            minY = Math.min(minY, corner.y);
+            maxY = Math.max(maxY, corner.y);
+        }
+
+        return new RectF(minX, minY, maxX, maxY);
+    }
+
+    private void showSettingsDialog(CameraSettings currentSettings) {
+        CameraSettingsDialog dialog = CameraSettingsDialog.newInstance(currentSettings);
+        dialog.setOnSettingsChangedListener(settings -> {
+            cameraPreviewLayout.applySettings(settings);
+            // 同步图像增强设置到内容识别器
+            contentRecognizer.setEnableEnhance(settings.getEnhanceConfig().isEnableEnhance());
+        });
+        dialog.show(getSupportFragmentManager(), "camera_settings");
+    }
+
+    private void releaseMatchResult() {
+        if (currentMatchResult != null) {
+            currentMatchResult.release();
+            currentMatchResult = null;
+        }
+        if (matchedBitmap != null && !matchedBitmap.isRecycled()) {
+            matchedBitmap.recycle();
+            matchedBitmap = null;
+        }
+        if (inversePerspectiveMatrix != null) {
+            inversePerspectiveMatrix.release();
+            inversePerspectiveMatrix = null;
+        }
+    }
+
+
+    private boolean checkCameraPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestCameraPermission() {
+        ActivityCompat.requestPermissions(this,
+                new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CAMERA_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                initCamera();
+            } else {
+                Toast.makeText(this, R.string.error_camera_permission, Toast.LENGTH_SHORT).show();
+                finish();
+            }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (cameraController != null) cameraController.startPreview();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (cameraController != null) cameraController.stopPreview();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (cameraController != null) cameraController.release();
+        releaseMatchResult();
+    }
+
+    private class RegionContentAdapter extends RecyclerView.Adapter<RegionContentAdapter.ViewHolder> {
+        private List<MatchResult.TransformedRegion> regions = new ArrayList<>();
+
+        void setRegions(List<MatchResult.TransformedRegion> regions) {
+            this.regions = regions != null ? regions : new ArrayList<>();
+            notifyDataSetChanged();
+        }
+
+        @NonNull
+        @Override
+        public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            View view = LayoutInflater.from(parent.getContext())
+                    .inflate(R.layout.item_region_content, parent, false);
+            return new ViewHolder(view);
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+            holder.bind(regions.get(position));
+        }
+
+        @Override
+        public int getItemCount() {
+            return regions.size();
+        }
+
+        class ViewHolder extends RecyclerView.ViewHolder {
+            TextView textViewRegionName, textViewRegionType, textViewContent;
+            ImageView imageViewStatus;
+
+            ViewHolder(View itemView) {
+                super(itemView);
+                textViewRegionName = itemView.findViewById(R.id.textViewRegionName);
+                textViewRegionType = itemView.findViewById(R.id.textViewRegionType);
+                textViewContent = itemView.findViewById(R.id.textViewContent);
+                imageViewStatus = itemView.findViewById(R.id.imageViewStatus);
+            }
+
+            void bind(MatchResult.TransformedRegion region) {
+                textViewRegionName.setText(region.getRegion().getName());
+                textViewRegionType.setVisibility(View.GONE);
+
+                if (region.hasContent()) {
+                    textViewContent.setText(region.getContent());
+                    textViewContent.setTextColor(getColor(R.color.content_recognized));
+                    imageViewStatus.setImageResource(R.drawable.ic_check);
+                    imageViewStatus.setColorFilter(getColor(R.color.confidence_high));
+                } else {
+                    textViewContent.setText(R.string.content_not_recognized);
+                    textViewContent.setTextColor(getColor(R.color.content_not_recognized));
+                    imageViewStatus.setImageResource(R.drawable.ic_warning);
+                    imageViewStatus.setColorFilter(getColor(R.color.confidence_low));
+                }
+            }
+        }
+    }
+}

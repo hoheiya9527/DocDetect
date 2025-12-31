@@ -77,7 +77,9 @@ public class CameraConfigManager {
         
         if (configJson == null) {
             Log.d(TAG, "No saved settings found, using defaults");
-            return CameraSettings.createDefault();
+            CameraSettings defaults = CameraSettings.createDefault();
+            Log.d(TAG, "Default settings: autoCapture=" + defaults.isAutoCapture() + ", threshold=" + defaults.getAutoCaptureThreshold());
+            return defaults;
         }
 
         try {
@@ -90,7 +92,7 @@ public class CameraConfigManager {
             }
             
             CameraSettings settings = jsonToSettings(json);
-            Log.d(TAG, "Camera settings loaded successfully");
+            Log.d(TAG, "Camera settings loaded successfully, autoCapture=" + settings.isAutoCapture() + ", threshold=" + settings.getAutoCaptureThreshold());
             return settings;
             
         } catch (JSONException e) {
@@ -131,14 +133,7 @@ public class CameraConfigManager {
         // 增强配置
         CameraSettings.EnhanceConfig enhance = settings.getEnhanceConfig();
         JSONObject enhanceJson = new JSONObject();
-        enhanceJson.put("enable_detection_enhance", enhance.isEnableDetectionEnhance());
-        enhanceJson.put("enable_recognition_enhance", enhance.isEnableRecognitionEnhance());
-        enhanceJson.put("light_enhance_strength", enhance.getLightEnhanceStrength());
-        enhanceJson.put("clahe_clip_limit", enhance.getClaheClipLimit());
-        enhanceJson.put("clahe_tile_size", enhance.getClaheTileSize());
-        enhanceJson.put("sharpen_strength", enhance.getSharpenStrength());
-        enhanceJson.put("sharpness_threshold", enhance.getSharpnessThreshold());
-        enhanceJson.put("contrast_threshold", enhance.getContrastThreshold());
+        enhanceJson.put("enable_enhance", enhance.isEnableEnhance());
         
         json.put("enhance_config", enhanceJson);
         
@@ -177,20 +172,13 @@ public class CameraConfigManager {
         JSONObject enhanceJson = json.optJSONObject("enhance_config");
         if (enhanceJson != null) {
             CameraSettings.EnhanceConfig enhance = new CameraSettings.EnhanceConfig();
-            enhance.setEnableDetectionEnhance(enhanceJson.optBoolean("enable_detection_enhance", false));
-            enhance.setEnableRecognitionEnhance(enhanceJson.optBoolean("enable_recognition_enhance", true));
-            enhance.setLightEnhanceStrength((float) enhanceJson.optDouble("light_enhance_strength", 0.2));
-            enhance.setClaheClipLimit((float) enhanceJson.optDouble("clahe_clip_limit", 2.0));
-            enhance.setClaheTileSize(enhanceJson.optInt("clahe_tile_size", 16));
-            enhance.setSharpenStrength((float) enhanceJson.optDouble("sharpen_strength", 0.2));
-            enhance.setSharpnessThreshold(enhanceJson.optDouble("sharpness_threshold", 100.0));
-            enhance.setContrastThreshold(enhanceJson.optDouble("contrast_threshold", 0.3));
+            enhance.setEnableEnhance(enhanceJson.optBoolean("enable_enhance", true));
             settings.setEnhanceConfig(enhance);
         }
         
         // 检测设置
         settings.setConfidenceThreshold(json.optDouble("confidence_threshold", 0.99));
-        settings.setAutoCapture(json.optBoolean("auto_capture", false));
+        settings.setAutoCapture(json.optBoolean("auto_capture", true));
         settings.setAutoCaptureThreshold(json.optDouble("auto_capture_threshold", 0.998));
         
         return settings;

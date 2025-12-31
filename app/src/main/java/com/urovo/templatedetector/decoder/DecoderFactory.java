@@ -1,9 +1,8 @@
 package com.urovo.templatedetector.decoder;
 
 import android.content.Context;
-import android.util.Log;
 
-import com.urovo.templatedetector.decoder.mlkit.MlkitBarcodeDecoder;
+import com.urovo.templatedetector.decoder.kyd.KydBarcodeDecoder;
 
 /**
  * 解码器工厂
@@ -29,7 +28,8 @@ public class DecoderFactory {
      * @return MLKit解码器实例
      */
     public static BarcodeDecoder create(DecoderType type, Context context) {
-        Log.d(TAG, "Creating MLKit barcode decoder");
-        return new MlkitBarcodeDecoder();
+//        Log.d(TAG, "Creating MLKit barcode decoder");
+//        return new MlkitBarcodeDecoder();
+        return new KydBarcodeDecoder(context);
     }
 }

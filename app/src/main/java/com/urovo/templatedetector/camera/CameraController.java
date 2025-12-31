@@ -92,6 +92,7 @@ public class CameraController {
         this.analysisExecutor = Executors.newSingleThreadExecutor();
         this.configManager = CameraConfigManager.getInstance(context);
         this.currentSettings = configManager.loadSettings();
+        Log.d(TAG, "CameraController initialized, autoCapture=" + currentSettings.isAutoCapture() + ", threshold=" + currentSettings.getAutoCaptureThreshold());
     }
 
     /**
@@ -100,6 +101,8 @@ public class CameraController {
     public void initialize(LifecycleOwner owner, PreviewView previewView) {
         this.lifecycleOwner = owner;
         this.previewView = previewView;
+        
+        // 使用默认的 FILL_CENTER 模式，预览铺满整个 View
 
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
                 ProcessCameraProvider.getInstance(context);
@@ -145,9 +148,12 @@ public class CameraController {
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
         // 图像分析配置
+        // 设置输出格式为 RGBA_8888
+        // 这样 imageProxy.toBitmap() 可以直接获取正确格式的图像
         imageAnalysis = new ImageAnalysis.Builder()
                 .setTargetResolution(currentSettings.getAnalysisResolution())
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .build();
 
         imageAnalysis.setAnalyzer(analysisExecutor, image -> {

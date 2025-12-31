@@ -27,8 +27,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TemplateDetector"
+rootProject.name = "DocDetect"
 include ':app'
 include ':KydDecoder'
-include ':PaddleOCR'
-// include ':sdk'
+include ':OpenCV'

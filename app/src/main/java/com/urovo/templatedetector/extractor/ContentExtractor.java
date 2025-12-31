@@ -10,14 +10,15 @@ import android.util.Log;
 import com.urovo.templatedetector.decoder.BarcodeDecoder;
 import com.urovo.templatedetector.decoder.BarcodeResult;
 import com.urovo.templatedetector.decoder.DecoderFactory;
-import com.urovo.templatedetector.model.CameraSettings;
-import com.urovo.templatedetector.model.ContentRegion;
+import com.urovo.templatedetector.model.DetectedRegion;
+import com.urovo.templatedetector.model.TemplateRegion;
 import com.urovo.templatedetector.ocr.OCREngine;
 import com.urovo.templatedetector.ocr.OCREngineFactory;
 import com.urovo.templatedetector.ocr.OCRResult;
-import com.urovo.templatedetector.util.AdaptiveEnhancer;
-import com.urovo.templatedetector.util.CameraConfigManager;
-import com.urovo.templatedetector.util.PerformanceTracker;
+import com.urovo.templatedetector.util.ImageEnhancer;
+
+import org.opencv.android.Utils;
+import org.opencv.core.Mat;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,38 +42,52 @@ public class ContentExtractor {
      */
     public interface ExtractionCallback {
         void onProgress(int current, int total);
-        void onComplete(List<ContentRegion> regions);
+        void onComplete(List<DetectedRegion> regions);
         void onError(Exception e);
     }
 
     private final Context context;
     private final ExecutorService executor;
     private final Handler mainHandler;
-    private final CameraConfigManager configManager;
 
     private OCREngine ocrEngine;
     private BarcodeDecoder barcodeDecoder;
     private boolean isInitialized = false;
-    // 标记组件是否由外部注入（不应在release时释放）
     private boolean componentsInjected = false;
+    
+    /** 是否启用图像增强 */
+    private boolean enableEnhance = true;
 
     public ContentExtractor(Context context) {
         this.context = context.getApplicationContext();
         this.executor = Executors.newFixedThreadPool(2);
         this.mainHandler = new Handler(Looper.getMainLooper());
-        this.configManager = CameraConfigManager.getInstance(context);
+    }
+
+    /**
+     * 设置是否启用图像增强
+     * @param enable true 启用增强（灰度+CLAHE），false 使用原图
+     */
+    public void setEnableEnhance(boolean enable) {
+        this.enableEnhance = enable;
+    }
+
+    /**
+     * 获取是否启用图像增强
+     */
+    public boolean isEnableEnhance() {
+        return enableEnhance;
     }
 
     /**
      * 设置已初始化的组件（从AppInitializer获取）
-     * 注意：外部注入的组件不会在release时被释放
      */
     public synchronized void setInitializedComponents(OCREngine ocrEngine, BarcodeDecoder barcodeDecoder) {
         this.ocrEngine = ocrEngine;
         this.barcodeDecoder = barcodeDecoder;
         this.isInitialized = (ocrEngine != null);
         this.componentsInjected = true;
-        Log.d(TAG, "ContentExtractor configured with pre-initialized components");
+        Log.d(TAG, ">> ContentExtractor configured with pre-initialized components");
     }
 
     /**
@@ -84,22 +99,20 @@ public class ContentExtractor {
         }
 
         try {
-            // 初始化OCR引擎
             ocrEngine = OCREngineFactory.create(ocrEngineType, context);
             if (!ocrEngine.initialize()) {
-                Log.e(TAG, "Failed to initialize OCR engine: " + ocrEngine.getEngineName());
+                Log.e(TAG, ">> Failed to initialize OCR engine: " + ocrEngine.getEngineName());
                 return false;
             }
 
-            // 初始化条码解码器
             barcodeDecoder = DecoderFactory.create(DecoderFactory.DecoderType.KYD, context);
 
             isInitialized = true;
-            Log.d(TAG, "ContentExtractor initialized with " + ocrEngine.getEngineName());
+            Log.d(TAG, ">> ContentExtractor initialized with " + ocrEngine.getEngineName());
             return true;
 
         } catch (Exception e) {
-            Log.e(TAG, "Failed to initialize ContentExtractor", e);
+            Log.e(TAG, ">> Failed to initialize ContentExtractor", e);
             return false;
         }
     }
@@ -115,11 +128,11 @@ public class ContentExtractor {
      * 设置自定义OCR引擎
      */
     public synchronized void setOCREngine(OCREngine engine) {
-        if (ocrEngine != null) {
+        if (ocrEngine != null && !componentsInjected) {
             ocrEngine.release();
         }
         this.ocrEngine = engine;
-        Log.d(TAG, "OCR engine switched to: " + engine.getEngineName());
+        Log.d(TAG, ">> OCR engine switched to: " + engine.getEngineName());
     }
 
     /**
@@ -131,80 +144,81 @@ public class ContentExtractor {
 
     /**
      * 提取所有内容（异步）
+     * 同时进行 OCR 和条码识别
      */
     public void extract(Bitmap image, ExtractionCallback callback) {
-//        if (!isInitialized) {
-//            callback.onError(new IllegalStateException("ContentExtractor not initialized"));
-//            return;
-//        }
-
         if (image == null) {
             callback.onError(new IllegalArgumentException("Image is null"));
             return;
         }
 
-        Log.d(TAG, "extract: input image size=" + image.getWidth() + "x" + image.getHeight());
+        Log.d(TAG, ">> extract: input image size=" + image.getWidth() + "x" + image.getHeight());
 
         executor.execute(() -> {
+            Bitmap enhancedImage = null;
             try {
-                // 获取当前相机设置
-                CameraSettings settings = configManager.loadSettings();
-                CameraSettings.EnhanceConfig enhanceConfig = settings.getEnhanceConfig();
-
-                // 识别阶段的智能增强
-                Bitmap enhancedImage = AdaptiveEnhancer.smartEnhance(image, enhanceConfig, false);
-                if (enhancedImage != image) {
-                    Log.d(TAG, "Applied recognition-stage enhancement");
+                // 如果启用增强，对图像进行增强处理
+                final Bitmap imageForRecognition;
+                if (enableEnhance) {
+                    enhancedImage = enhanceBitmap(image);
+                    imageForRecognition = enhancedImage != null ? enhancedImage : image;
+                    if (enhancedImage != null) {
+                        Log.d(TAG, ">> Image enhancement applied for extraction");
+                    }
+                } else {
+                    imageForRecognition = image;
                 }
 
-                List<ContentRegion> allRegions = new ArrayList<>();
+                List<DetectedRegion> allRegions = new ArrayList<>();
                 CountDownLatch latch = new CountDownLatch(2);
 
                 AtomicReference<List<OCRResult>> ocrResults = new AtomicReference<>(new ArrayList<>());
                 AtomicReference<List<BarcodeResult>> barcodeResults = new AtomicReference<>(new ArrayList<>());
 
-                // 并行执行OCR
-//                executor.execute(() -> {
-//                    try {
-//                        postProgress(callback, 0, 2);
-//                        List<OCRResult> results = ocrEngine.recognize(image);
-//                        ocrResults.set(results);
-//                        postProgress(callback, 1, 2);
-//                    } catch (Exception e) {
-//                        Log.e(TAG, "OCR failed", e);
-//                    } finally {
-                        latch.countDown();
-//                    }
-//                });
-
-                // 并行执行条码解码
+                // OCR 识别
                 executor.execute(() -> {
                     try {
-                        Log.d(TAG, "Starting barcode decode, image size=" + enhancedImage.getWidth() + "x" + enhancedImage.getHeight());
-                        CountDownLatch decodeLatch = new CountDownLatch(1);
-                        barcodeDecoder.decode(enhancedImage, 0, new BarcodeDecoder.DecodeCallback() {
-                            @Override
-                            public void onSuccess(List<BarcodeResult> results) {
-                                Log.d(TAG, "Barcode decode success, results count=" + results.size());
-                                for (BarcodeResult result : results) {
-                                    Log.d(TAG, "Barcode result: content=" + result.getContent() + 
-                                          ", bounds=" + result.getBoundingBox() + 
-                                          ", corners=" + java.util.Arrays.toString(result.getCornerPoints()));
-                                }
-                                barcodeResults.set(results);
-                                decodeLatch.countDown();
+                        if (ocrEngine != null) {
+                            Log.d(TAG, ">> Starting OCR recognition");
+                            List<OCRResult> results = ocrEngine.recognize(imageForRecognition);
+                            if (results != null) {
+                                ocrResults.set(results);
+                                Log.d(TAG, ">> OCR recognition success, count=" + results.size());
                             }
+                        }
+                        postProgress(callback, 1, 2);
+                    } catch (Exception e) {
+                        Log.e(TAG, ">> OCR recognition error", e);
+                    } finally {
+                        latch.countDown();
+                    }
+                });
 
-                            @Override
-                            public void onFailure(Exception e) {
-                                Log.e(TAG, "Barcode decode failed", e);
-                                decodeLatch.countDown();
-                            }
-                        });
-                        decodeLatch.await(5, TimeUnit.SECONDS);
+                // 条码解码
+                executor.execute(() -> {
+                    try {
+                        if (barcodeDecoder != null) {
+                            Log.d(TAG, ">> Starting barcode decode");
+                            CountDownLatch decodeLatch = new CountDownLatch(1);
+                            barcodeDecoder.decode(imageForRecognition, 0, new BarcodeDecoder.DecodeCallback() {
+                                @Override
+                                public void onSuccess(List<BarcodeResult> results) {
+                                    Log.d(TAG, ">> Barcode decode success, count=" + results.size());
+                                    barcodeResults.set(results);
+                                    decodeLatch.countDown();
+                                }
+
+                                @Override
+                                public void onFailure(Exception e) {
+                                    Log.e(TAG, ">> Barcode decode failed", e);
+                                    decodeLatch.countDown();
+                                }
+                            });
+                            decodeLatch.await(5, TimeUnit.SECONDS);
+                        }
                         postProgress(callback, 2, 2);
                     } catch (Exception e) {
-                        Log.e(TAG, "Barcode decode error", e);
+                        Log.e(TAG, ">> Barcode decode error", e);
                     } finally {
                         latch.countDown();
                     }
@@ -212,40 +226,121 @@ public class ContentExtractor {
 
                 boolean completed = latch.await(EXTRACTION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
                 if (!completed) {
-                    Log.w(TAG, "Extraction timeout");
+                    Log.w(TAG, ">> Extraction timeout");
                 }
 
-                allRegions.addAll(convertOCRResults(ocrResults.get()));
-                allRegions.addAll(convertBarcodeResults(barcodeResults.get()));
+                // 合并结果，条码优先（去重）
+                List<DetectedRegion> barcodeRegions = convertBarcodeResults(barcodeResults.get());
+                List<DetectedRegion> ocrRegions = convertOCRResults(ocrResults.get());
+                
+                // 添加条码结果
+                allRegions.addAll(barcodeRegions);
+                
+                // 添加 OCR 结果（排除与条码重叠的区域）
+                for (DetectedRegion ocrRegion : ocrRegions) {
+                    if (!isOverlappingWithAny(ocrRegion, barcodeRegions)) {
+                        allRegions.add(ocrRegion);
+                    }
+                }
+                
                 sortRegionsByPosition(allRegions);
-
-                // 清理增强后的图像（如果不同于原始图像）
-                if (enhancedImage != image && !enhancedImage.isRecycled()) {
-                    enhancedImage.recycle();
-                }
 
                 postComplete(callback, allRegions);
 
             } catch (Exception e) {
-                Log.e(TAG, "Extraction failed", e);
+                Log.e(TAG, ">> Extraction failed", e);
                 postError(callback, e);
+            } finally {
+                // 释放增强后的图像
+                if (enhancedImage != null && !enhancedImage.isRecycled()) {
+                    enhancedImage.recycle();
+                }
             }
         });
     }
 
     /**
+     * 对 Bitmap 进行图像增强（灰度 + CLAHE）
+     * @param source 原始图像
+     * @return 增强后的图像，失败返回 null
+     */
+    private Bitmap enhanceBitmap(Bitmap source) {
+        if (source == null || source.isRecycled()) {
+            return null;
+        }
+
+        Mat srcMat = null;
+        Mat enhancedMat = null;
+        try {
+            srcMat = new Mat();
+            Utils.bitmapToMat(source, srcMat);
+            
+            enhancedMat = ImageEnhancer.enhanceMat(srcMat);
+            if (enhancedMat == null || enhancedMat.empty()) {
+                return null;
+            }
+
+            return ImageEnhancer.matToBitmap(enhancedMat);
+        } catch (Exception e) {
+            Log.e(TAG, "enhanceBitmap failed", e);
+            return null;
+        } finally {
+            if (srcMat != null) srcMat.release();
+            if (enhancedMat != null) enhancedMat.release();
+        }
+    }
+
+    /**
+     * 检查区域是否与列表中任意区域重叠
+     */
+    private boolean isOverlappingWithAny(DetectedRegion region, List<DetectedRegion> others) {
+        RectF bounds = region.getBoundingBox();
+        if (bounds == null) return false;
+        
+        for (DetectedRegion other : others) {
+            RectF otherBounds = other.getBoundingBox();
+            if (otherBounds != null && RectF.intersects(bounds, otherBounds)) {
+                // 计算重叠比例
+                float overlapArea = calculateOverlapArea(bounds, otherBounds);
+                float regionArea = bounds.width() * bounds.height();
+                if (regionArea > 0 && overlapArea / regionArea > 0.5f) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 计算两个矩形的重叠面积
+     */
+    private float calculateOverlapArea(RectF a, RectF b) {
+        float left = Math.max(a.left, b.left);
+        float top = Math.max(a.top, b.top);
+        float right = Math.min(a.right, b.right);
+        float bottom = Math.min(a.bottom, b.bottom);
+        
+        if (left < right && top < bottom) {
+            return (right - left) * (bottom - top);
+        }
+        return 0;
+    }
+
+    /**
      * 同步提取
      */
-    public List<ContentRegion> extractSync(Bitmap image) {
+    public List<DetectedRegion> extractSync(Bitmap image) {
         if (!isInitialized || image == null) {
             return new ArrayList<>();
         }
 
-        List<ContentRegion> allRegions = new ArrayList<>();
+        List<DetectedRegion> allRegions = new ArrayList<>();
 
         // OCR识别
-        List<OCRResult> ocrResults = ocrEngine.recognize(image);
-        allRegions.addAll(convertOCRResults(ocrResults));
+        if (ocrEngine != null) {
+            List<OCRResult> ocrResults = ocrEngine.recognize(image);
+            allRegions.addAll(convertOCRResults(ocrResults));
+        }
 
         // 条码解码
         CountDownLatch latch = new CountDownLatch(1);
@@ -276,19 +371,21 @@ public class ContentExtractor {
         return allRegions;
     }
 
-    private List<ContentRegion> convertOCRResults(List<OCRResult> ocrResults) {
-        List<ContentRegion> regions = new ArrayList<>();
+    private List<DetectedRegion> convertOCRResults(List<OCRResult> ocrResults) {
+        List<DetectedRegion> regions = new ArrayList<>();
         if (ocrResults == null) {
             return regions;
         }
 
         for (OCRResult ocr : ocrResults) {
             if (ocr.isValid()) {
-                ContentRegion region = new ContentRegion(
-                        ContentRegion.ContentType.OCR,
+                // OCR 区域适当外扩
+                RectF expandedBounds = expandBounds(ocr.getBoundingBox(), TemplateRegion.EXPAND_RATIO_TEXT);
+                DetectedRegion region = new DetectedRegion(
+                        DetectedRegion.Type.TEXT,
                         ocr.getText(),
                         "TEXT",
-                        ocr.getBoundingBox(),
+                        expandedBounds,
                         ocr.getCornerPoints(),
                         ocr.getConfidence()
                 );
@@ -298,19 +395,21 @@ public class ContentExtractor {
         return regions;
     }
 
-    private List<ContentRegion> convertBarcodeResults(List<BarcodeResult> barcodeResults) {
-        List<ContentRegion> regions = new ArrayList<>();
+    private List<DetectedRegion> convertBarcodeResults(List<BarcodeResult> barcodeResults) {
+        List<DetectedRegion> regions = new ArrayList<>();
         if (barcodeResults == null) {
             return regions;
         }
 
         for (BarcodeResult barcode : barcodeResults) {
             if (barcode.getContent() != null && !barcode.getContent().isEmpty()) {
-                ContentRegion region = new ContentRegion(
-                        ContentRegion.ContentType.BARCODE,
+                // 条码区域适当外扩，比文字扩展更多
+                RectF expandedBounds = expandBounds(barcode.getBoundingBox(), TemplateRegion.EXPAND_RATIO_BARCODE);
+                DetectedRegion region = new DetectedRegion(
+                        DetectedRegion.Type.BARCODE,
                         barcode.getContent(),
                         barcode.getFormat(),
-                        barcode.getBoundingBox(),
+                        expandedBounds,
                         barcode.getCornerPoints(),
                         1.0f
                 );
@@ -320,7 +419,31 @@ public class ContentExtractor {
         return regions;
     }
 
-    private void sortRegionsByPosition(List<ContentRegion> regions) {
+    /**
+     * 扩展边界框
+     * @param bounds 原始边界框
+     * @param ratio 扩展比例（如 0.1 表示每边扩展 10%）
+     * @return 扩展后的边界框
+     */
+    private RectF expandBounds(RectF bounds, float ratio) {
+        if (bounds == null) {
+            return null;
+        }
+        
+        float width = bounds.width();
+        float height = bounds.height();
+        float expandX = width * ratio;
+        float expandY = height * ratio;
+        
+        return new RectF(
+                bounds.left - expandX,
+                bounds.top - expandY,
+                bounds.right + expandX,
+                bounds.bottom + expandY
+        );
+    }
+
+    private void sortRegionsByPosition(List<DetectedRegion> regions) {
         regions.sort((a, b) -> {
             RectF boxA = a.getBoundingBox();
             RectF boxB = b.getBoundingBox();
@@ -339,7 +462,7 @@ public class ContentExtractor {
         mainHandler.post(() -> callback.onProgress(current, total));
     }
 
-    private void postComplete(ExtractionCallback callback, List<ContentRegion> regions) {
+    private void postComplete(ExtractionCallback callback, List<DetectedRegion> regions) {
         mainHandler.post(() -> callback.onComplete(regions));
     }
 
@@ -352,7 +475,6 @@ public class ContentExtractor {
     }
 
     public synchronized void release() {
-        // 只释放自己创建的组件，外部注入的组件由 AppInitializer 管理
         if (!componentsInjected) {
             if (ocrEngine != null) {
                 ocrEngine.release();
@@ -366,6 +488,6 @@ public class ContentExtractor {
         executor.shutdown();
         isInitialized = false;
         componentsInjected = false;
-        Log.d(TAG, "ContentExtractor released");
+        Log.d(TAG, ">> ContentExtractor released");
     }
 }

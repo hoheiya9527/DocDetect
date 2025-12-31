@@ -28,6 +28,7 @@ import org.tensorflow.lite.support.common.ops.NormalizeOp;
 import org.tensorflow.lite.support.image.ImageProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.image.ops.ResizeOp;
+import org.tensorflow.lite.support.image.ops.Rot90Op;
 
 import com.urovo.templatedetector.util.PerformanceTracker;
 
@@ -107,65 +108,120 @@ public class LabelDetector {
     }
 
     /**
-     * 检测标签区域
+     * 检测标签区域（Mat输入）
      */
-    public DetectionResult detect(Bitmap bitmap) {
-        Log.d(TAG, "detect(Bitmap) called, initialized=" + isInitialized + ", bitmap=" + (bitmap != null));
-        if (!isInitialized || bitmap == null) {
-            Log.w(TAG, "Detection skipped: initialized=" + isInitialized + ", bitmap=" + (bitmap != null));
+    public DetectionResult detect(Mat mat) {
+        if (!isInitialized || mat == null || mat.empty()) {
             return DetectionResult.notDetected();
         }
 
+        // Mat → Bitmap（TensorImage需要Bitmap输入）
+        Bitmap bitmap = null;
+        try {
+            bitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888);
+
+            // 根据通道数转换
+            if (mat.channels() == 1) {
+                Mat rgba = new Mat();
+                Imgproc.cvtColor(mat, rgba, Imgproc.COLOR_GRAY2RGBA);
+                Utils.matToBitmap(rgba, bitmap);
+                rgba.release();
+            } else if (mat.channels() == 3) {
+                Mat rgba = new Mat();
+                Imgproc.cvtColor(mat, rgba, Imgproc.COLOR_BGR2RGBA);
+                Utils.matToBitmap(rgba, bitmap);
+                rgba.release();
+            } else {
+                Utils.matToBitmap(mat, bitmap);
+            }
+
+            return detect(bitmap);
+        } finally {
+            if (bitmap != null) {
+                bitmap.recycle();
+            }
+        }
+    }
+
+    /**
+     * 检测标签区域（带旋转支持）
+     *
+     * @param bitmap          彩色 Bitmap（ARGB_8888）
+     * @param rotationDegrees 旋转角度（0, 90, 180, 270）
+     * @return 检测结果
+     */
+    public DetectionResult detect(Bitmap bitmap, int rotationDegrees) {
+        if (!isInitialized || bitmap == null) {
+            return DetectionResult.notDetected();
+        }
+
+        // 计算旋转后的尺寸
         int originalWidth = bitmap.getWidth();
         int originalHeight = bitmap.getHeight();
-        Log.d(TAG, "Input image size: " + originalWidth + "x" + originalHeight);
+        boolean isRotated90or270 = (rotationDegrees == 90 || rotationDegrees == 270);
+        int rotatedWidth = isRotated90or270 ? originalHeight : originalWidth;
+        int rotatedHeight = isRotated90or270 ? originalWidth : originalHeight;
 
         try (PerformanceTracker.Timer timer = new PerformanceTracker.Timer(PerformanceTracker.MetricType.DETECTION)) {
-            // 1. 使用 TensorImage 加载并预处理图像
+            // 1. 创建带旋转的图像处理器
+            int rotation = -rotationDegrees / 90;
+
+            ImageProcessor rotatedImageProcessor = new ImageProcessor.Builder()
+                    .add(new ResizeOp(outputHeight, outputWidth, ResizeOp.ResizeMethod.BILINEAR))
+                    .add(new Rot90Op(rotation))
+                    .add(new NormalizeOp(127.5f, 127.5f))
+                    .build();
+
+            // 2. 使用 TensorImage 加载并预处理图像
             TensorImage tensorImage = new TensorImage(DataType.FLOAT32);
             tensorImage.load(bitmap);
-            TensorImage processedImage = imageProcessor.process(tensorImage);
 
-            // 2. 准备输出缓冲区
+            TensorImage processedImage = rotatedImageProcessor.process(tensorImage);
+
+            // 3. 准备输出缓冲区
             ByteBuffer outputBuffer = ByteBuffer.allocateDirect(4 * outputHeight * outputWidth);
             outputBuffer.order(ByteOrder.nativeOrder());
             outputBuffer.rewind();
 
-            // 3. 执行推理
+            // 4. 执行推理
             interpreter.run(processedImage.getBuffer(), outputBuffer);
 
-            // 4. 提取概率图
+            // 5. 提取概率图
             float[] probMap = extractProbMap(outputBuffer);
 
-            // 5. 检测四边形
+            // 6. 检测四边形（模型坐标系 256x256）
             PointF[] quad = detectDocumentQuad(probMap, true);
 
             if (quad == null) {
                 return DetectionResult.notDetected();
             }
 
-            // 6. 缩放到原始图像尺寸
-            PointF[] scaledQuad = scaleQuad(quad, outputWidth, outputHeight, originalWidth, originalHeight);
+            // 7. 缩放到旋转后的图像尺寸（用于裁剪）
+            PointF[] imageQuad = scaleQuad(quad, outputWidth, outputHeight, rotatedWidth, rotatedHeight);
 
-            // 7. 向外扩展%，补偿模型检测边缘不完整（用于显示）
-            PointF[] expandedQuad = expandQuad(scaledQuad, 0.05f, originalWidth, originalHeight);
+            // 8. 在模型坐标系中扩展（用于显示）
+            PointF[] expandedModelQuad = expandQuad(quad, 0.02f, outputWidth, outputHeight);
 
-            // 计算边界框（使用扩展后的坐标）
-            RectF boundingBox = calculateBoundingBox(expandedQuad);
+            // 计算边界框（模型坐标系）
+            RectF boundingBox = calculateBoundingBox(expandedModelQuad);
 
             // 计算置信度
             float confidence = calculateConfidence(probMap, quad);
 
             // 计算旋转角度
-            float rotationAngle = calculateRotationAngle(expandedQuad);
+            float rotationAngle = calculateRotationAngle(quad);
 
+            // 返回结果：
+            // - cornerPoints: 模型坐标系（用于显示）
+            // - originalCornerPoints: 图像坐标系（用于裁剪）
             return new DetectionResult.Builder()
                     .setDetected(true)
-                    .setCornerPoints(expandedQuad)           // 扩展后的坐标（用于显示）
-                    .setOriginalCornerPoints(scaledQuad)     // 原始坐标（用于裁剪）
+                    .setCornerPoints(expandedModelQuad)
+                    .setOriginalCornerPoints(imageQuad)
                     .setBoundingBox(boundingBox)
                     .setConfidence(confidence)
                     .setRotationAngle(rotationAngle)
+                    .setModelSize(outputWidth, outputHeight)
                     .build();
 
         } catch (Exception e) {
@@ -174,9 +230,16 @@ public class LabelDetector {
         }
     }
 
+    /**
+     * 检测标签区域（无旋转）
+     */
+    public DetectionResult detect(Bitmap bitmap) {
+        return detect(bitmap, 0);
+    }
+
 
     /**
-     * 从ImageProxy检测
+     * 从ImageProxy检测（使用彩色图像 + Rot90Op）
      *
      * @param imageProxy      图像代理
      * @param rotationDegrees 旋转角度（0, 90, 180, 270）
@@ -188,27 +251,21 @@ public class LabelDetector {
             return DetectionResult.notDetected();
         }
 
-        Bitmap bitmap = imageProxyToBitmap(imageProxy, rotationDegrees);
+        // 直接获取彩色 Bitmap，不进行旋转（旋转在 ImageProcessor 中通过 Rot90Op 处理）
+        Bitmap bitmap = imageProxyToBitmap(imageProxy);
         if (bitmap == null) {
             Log.w(TAG, "Failed to convert ImageProxy to Bitmap");
             return DetectionResult.notDetected();
         }
 
         Log.d(TAG, "Converted to Bitmap: " + bitmap.getWidth() + "x" + bitmap.getHeight());
-        DetectionResult result = detect(bitmap);
+        // 使用带旋转的检测方法
+        DetectionResult result = detect(bitmap, rotationDegrees);
         bitmap.recycle();
         Log.d(TAG, "Detection result: detected=" + result.isDetected());
         return result;
     }
 
-    /**
-     * 从ImageProxy检测（无旋转）
-     *
-     * @deprecated 使用 detect(ImageProxy, int) 代替
-     */
-    public DetectionResult detect(ImageProxy imageProxy) {
-        return detect(imageProxy, 0);
-    }
 
     /**
      * 从输出缓冲区提取概率图
@@ -228,6 +285,11 @@ public class LabelDetector {
 
     /**
      * 检测文档四边形
+     * Fallback 策略：
+     * 1. 直接从 mask 找 4 顶点轮廓
+     * 2. Fallback 1: detectDocumentQuadFromProbmap (Otsu + 阈值扫描)
+     * 3. Fallback 2: findQuadFromRightAngles (寻找直角)
+     * 4. Fallback 3: minAreaRect (最小外接矩形) - 仅非实时分析
      */
     private PointF[] detectDocumentQuad(float[] probMap, boolean isLiveAnalysis) {
         // 创建掩码 Mat
@@ -253,9 +315,15 @@ public class LabelDetector {
 
             vertices = detectDocumentQuadFromProbmap(mask, thresholds);
 
-            // Fallback 2: 如果还是没找到，但有多于4个顶点的轮廓，尝试最小外接矩形
+            // Fallback 2: 如果还是没找到，但有多于4个顶点的轮廓，尝试从直角中找四边形
             if (vertices == null && contourResult.contour != null && contourResult.contour.total() > 4) {
-                vertices = minAreaRect(contourResult.contour);
+                Point[] polygon = contourResult.contour.toArray();
+                vertices = findQuadFromRightAngles(polygon, outputWidth, outputHeight);
+
+                // Fallback 3: 最小外接矩形（仅非实时分析）
+                if (vertices == null && !isLiveAnalysis) {
+                    vertices = minAreaRect(contourResult.contour);
+                }
             }
         }
 
@@ -378,6 +446,7 @@ public class LabelDetector {
         // 1) Otsu
         Mat otsu = new Mat();
         Imgproc.threshold(probmapSmooth, otsu, 0, 255, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
+
         PointF[] quad = findQuadFromBinaryMask(otsu);
         if (quad != null) {
             double score = scoreQuadAgainstProbmap(quad, probmap);
@@ -513,7 +582,6 @@ public class LabelDetector {
 
     /**
      * 创建四边形（按角度排序）
-     * 与 FairScan 的 createQuad 一致
      * 排序后: [0]=topLeft, [1]=topRight, [2]=bottomRight, [3]=bottomLeft
      */
     private PointF[] createQuad(Point[] vertices) {
@@ -536,11 +604,11 @@ public class LabelDetector {
         Point[] sorted = vertices.clone();
         Arrays.sort(sorted, Comparator.comparingDouble(p -> Math.atan2(p.y - fcy, p.x - fcx)));
 
-        Log.d(TAG, "createQuad: centroid=(" + cx + ", " + cy + ")");
-        for (int i = 0; i < 4; i++) {
-            double angle = Math.toDegrees(Math.atan2(sorted[i].y - fcy, sorted[i].x - fcx));
-            Log.d(TAG, "createQuad: sorted[" + i + "]=(" + sorted[i].x + ", " + sorted[i].y + "), angle=" + angle);
-        }
+//        Log.d(TAG, "createQuad: centroid=(" + cx + ", " + cy + ")");
+//        for (int i = 0; i < 4; i++) {
+//            double angle = Math.toDegrees(Math.atan2(sorted[i].y - fcy, sorted[i].x - fcx));
+//            Log.d(TAG, "createQuad: sorted[" + i + "]=(" + sorted[i].x + ", " + sorted[i].y + "), angle=" + angle);
+//        }
 
         // 返回：按角度排序后的四个点
         return new PointF[]{
@@ -560,6 +628,216 @@ public class LabelDetector {
         rect.points(points);
         return createQuad(points);
     }
+
+    // ==================== 直角检测算法 ====================
+
+    /**
+     * 从多边形中寻找包含直角的四边形
+     * 查找连续3个近似直角的顶点，然后通过延长线交点构造第4个顶点
+     *
+     * @param polygon   多边形顶点数组
+     * @param imgWidth  图像宽度（用于边界检查）
+     * @param imgHeight 图像高度（用于边界检查）
+     * @return 找到的四边形顶点，未找到返回 null
+     */
+    private PointF[] findQuadFromRightAngles(Point[] polygon, int imgWidth, int imgHeight) {
+        return findQuadFromRightAngles(polygon, imgWidth, imgHeight, 60.0, 120.0);
+    }
+
+    /**
+     * 从多边形中寻找包含直角的四边形（带角度范围参数）
+     */
+    private PointF[] findQuadFromRightAngles(Point[] polygon, int imgWidth, int imgHeight,
+                                             double angleMin, double angleMax) {
+        if (polygon == null || polygon.length < 4) {
+            return null;
+        }
+
+        int n = polygon.length;
+
+        // 计算每个顶点的内角
+        double[] angles = new double[n];
+        for (int i = 0; i < n; i++) {
+            Point a = polygon[(i + n - 1) % n];
+            Point b = polygon[i];
+            Point c = polygon[(i + 1) % n];
+            angles[i] = orientedAngle(a, b, c);
+        }
+
+        PointF[] bestQuad = null;
+        double bestScore = Double.MAX_VALUE;
+
+        // 遍历所有可能的起始位置，寻找连续3个近似直角
+        for (int i = 0; i < n; i++) {
+            double angle0 = angles[i % n];
+            double angle1 = angles[(i + 1) % n];
+            double angle2 = angles[(i + 2) % n];
+
+            // 检查连续3个角是否都在直角范围内
+            if (isInRange(angle0, angleMin, angleMax) &&
+                    isInRange(angle1, angleMin, angleMax) &&
+                    isInRange(angle2, angleMin, angleMax)) {
+
+                Point a = polygon[(i + n - 1) % n];  // 第一条边的起点
+                Point b = polygon[i];                 // 第一个直角顶点
+                Point c = polygon[(i + 1) % n];       // 第二个直角顶点
+                Point d = polygon[(i + 2) % n];       // 第三个直角顶点
+                Point e = polygon[(i + 3) % n];       // 第三条边的终点
+
+                // 计算两条边的延长线交点作为第四个顶点
+                Point inter = lineIntersection(a, b, d, e);
+                if (inter == null) {
+                    continue;
+                }
+
+                // 构造四边形
+                Point[] quad = new Point[]{b, c, d, inter};
+
+                // 检查是否在图像边界内
+                if (!isQuadInBounds(quad, imgWidth, imgHeight)) {
+                    continue;
+                }
+
+                // 检查是否为凸四边形
+                if (!isConvexQuad(quad)) {
+                    continue;
+                }
+
+                // 计算四边形的角度误差分数（越小越好）
+                double score = quadAngleError(quad);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestQuad = createQuad(quad);
+                }
+            }
+        }
+
+        return bestQuad;
+    }
+
+    /**
+     * 计算有向角（从向量 ba 到向量 bc 的角度）
+     */
+    private double orientedAngle(Point a, Point b, Point c) {
+        double v1x = a.x - b.x;
+        double v1y = a.y - b.y;
+        double v2x = c.x - b.x;
+        double v2y = c.y - b.y;
+
+        double norm1 = Math.sqrt(v1x * v1x + v1y * v1y) + 1e-9;
+        double norm2 = Math.sqrt(v2x * v2x + v2y * v2y) + 1e-9;
+
+        double dot = (v1x * v2x + v1y * v2y) / (norm1 * norm2);
+        dot = Math.max(-1.0, Math.min(1.0, dot));
+
+        double cross = v1x * v2y - v1y * v2x;
+        double angle = Math.toDegrees(Math.acos(dot));
+
+        if (cross < 0) {
+            angle = 360.0 - angle;
+        }
+
+        return angle;
+    }
+
+    /**
+     * 计算两条直线的交点
+     * 直线1: 过点 p1 和 p2
+     * 直线2: 过点 p3 和 p4
+     */
+    private Point lineIntersection(Point p1, Point p2, Point p3, Point p4) {
+        double denom = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+        if (Math.abs(denom) < 1e-6) {
+            return null;  // 平行或重合
+        }
+
+        double numX = p1.x * p2.y - p1.y * p2.x;
+        double numY = p3.x * p4.y - p3.y * p4.x;
+
+        double px = (numX * (p3.x - p4.x) - (p1.x - p2.x) * numY) / denom;
+        double py = (numX * (p3.y - p4.y) - (p1.y - p2.y) * numY) / denom;
+
+        return new Point(px, py);
+    }
+
+    /**
+     * 计算两点之间的角度（用于角度误差计算）
+     */
+    private double angleBetweenVectors(double v1x, double v1y, double v2x, double v2y) {
+        double norm1 = Math.sqrt(v1x * v1x + v1y * v1y) + 1e-9;
+        double norm2 = Math.sqrt(v2x * v2x + v2y * v2y) + 1e-9;
+        double dot = (v1x * v2x + v1y * v2y) / (norm1 * norm2);
+        dot = Math.max(-1.0, Math.min(1.0, dot));
+        return Math.toDegrees(Math.acos(dot));
+    }
+
+    /**
+     * 计算四边形的角度误差（与90度的偏差之和）
+     */
+    private double quadAngleError(Point[] quad) {
+        double error = 0;
+        for (int i = 0; i < 4; i++) {
+            Point a = quad[(i + 3) % 4];
+            Point b = quad[i];
+            Point c = quad[(i + 1) % 4];
+
+            double v1x = a.x - b.x;
+            double v1y = a.y - b.y;
+            double v2x = c.x - b.x;
+            double v2y = c.y - b.y;
+
+            double angle = angleBetweenVectors(v1x, v1y, v2x, v2y);
+            error += Math.abs(angle - 90.0);
+        }
+        return error;
+    }
+
+    /**
+     * 检查四边形是否为凸四边形
+     */
+    private boolean isConvexQuad(Point[] quad) {
+        if (quad.length != 4) {
+            return false;
+        }
+
+        int sign = 0;
+        for (int i = 0; i < 4; i++) {
+            Point a = quad[i];
+            Point b = quad[(i + 1) % 4];
+            Point c = quad[(i + 2) % 4];
+
+            double cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+            int currentSign = (cross > 0) ? 1 : (cross < 0) ? -1 : 0;
+
+            if (sign == 0 && currentSign != 0) {
+                sign = currentSign;
+            } else if (currentSign != 0 && currentSign != sign) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 检查四边形是否在图像边界内
+     */
+    private boolean isQuadInBounds(Point[] quad, int imgWidth, int imgHeight) {
+        for (Point p : quad) {
+            if (p.x < 0 || p.x >= imgWidth || p.y < 0 || p.y >= imgHeight) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 检查角度是否在指定范围内
+     */
+    private boolean isInRange(double angle, double min, double max) {
+        return angle >= min && angle <= max;
+    }
+
+    // ==================== 直角检测算法结束 ====================
 
     /**
      * 生成阈值数组
@@ -709,8 +987,119 @@ public class LabelDetector {
     }
 
     /**
+     * 提取并校正标签图像（Mat版本）
+     *
+     * @param sourceMat 源图像Mat
+     * @param result    检测结果
+     * @return 校正后的Mat，失败返回null
+     */
+    public Mat extractAndCorrectMat(Mat sourceMat, DetectionResult result) {
+        CorrectionResult correctionResult = extractAndCorrectMatWithTransform(sourceMat, result);
+        if (correctionResult == null) {
+            return null;
+        }
+        // 释放变换矩阵，只返回校正后的图像
+        if (correctionResult.perspectiveMatrix != null) {
+            correctionResult.perspectiveMatrix.release();
+        }
+        return correctionResult.correctedMat;
+    }
+
+    /**
+     * 校正结果（包含变换矩阵）
+     */
+    public static class CorrectionResult {
+        /** 校正后的图像 */
+        public final Mat correctedMat;
+        /** 透视变换矩阵（从原图到校正图） */
+        public final Mat perspectiveMatrix;
+        /** 校正后图像的宽度 */
+        public final int width;
+        /** 校正后图像的高度 */
+        public final int height;
+
+        public CorrectionResult(Mat correctedMat, Mat perspectiveMatrix, int width, int height) {
+            this.correctedMat = correctedMat;
+            this.perspectiveMatrix = perspectiveMatrix;
+            this.width = width;
+            this.height = height;
+        }
+    }
+
+    /**
+     * 提取并校正标签图像，同时返回变换矩阵
+     *
+     * @param sourceMat 源图像Mat
+     * @param result    检测结果
+     * @return 校正结果（包含校正后的Mat和变换矩阵），失败返回null
+     */
+    public CorrectionResult extractAndCorrectMatWithTransform(Mat sourceMat, DetectionResult result) {
+        if (sourceMat == null || sourceMat.empty() || result == null || !result.hasValidCorners()) {
+            Log.w(TAG, "extractAndCorrectMatWithTransform: invalid input");
+            return null;
+        }
+
+        try (PerformanceTracker.Timer timer = new PerformanceTracker.Timer(PerformanceTracker.MetricType.PERSPECTIVE_TRANSFORM)) {
+            PointF[] corners = result.getOriginalCornerPoints();
+            if (corners == null || corners.length != 4) {
+                Log.w(TAG, "extractAndCorrectMatWithTransform: invalid corners");
+                return null;
+            }
+
+            PointF topLeft = corners[0];
+            PointF topRight = corners[1];
+            PointF bottomRight = corners[2];
+            PointF bottomLeft = corners[3];
+
+            MatOfPoint2f srcPoints = new MatOfPoint2f(
+                    new Point(topLeft.x, topLeft.y),
+                    new Point(topRight.x, topRight.y),
+                    new Point(bottomRight.x, bottomRight.y),
+                    new Point(bottomLeft.x, bottomLeft.y)
+            );
+
+            float widthTop = distance(topLeft, topRight);
+            float widthBottom = distance(bottomLeft, bottomRight);
+            float targetWidth = (widthTop + widthBottom) / 2;
+
+            float heightLeft = distance(topLeft, bottomLeft);
+            float heightRight = distance(topRight, bottomRight);
+            float targetHeight = (heightLeft + heightRight) / 2;
+
+            int dstWidth = (int) targetWidth;
+            int dstHeight = (int) targetHeight;
+
+            if (dstWidth <= 0 || dstHeight <= 0) {
+                Log.w(TAG, "extractAndCorrectMatWithTransform: invalid target size " + dstWidth + "x" + dstHeight);
+                srcPoints.release();
+                return null;
+            }
+
+            MatOfPoint2f dstPoints = new MatOfPoint2f(
+                    new Point(0, 0),
+                    new Point(dstWidth, 0),
+                    new Point(dstWidth, dstHeight),
+                    new Point(0, dstHeight)
+            );
+
+            Mat perspectiveMatrix = Imgproc.getPerspectiveTransform(srcPoints, dstPoints);
+            Mat dstMat = new Mat();
+            Imgproc.warpPerspective(sourceMat, dstMat, perspectiveMatrix, new Size(dstWidth, dstHeight));
+
+            srcPoints.release();
+            dstPoints.release();
+
+            Log.d(TAG, "extractAndCorrectMatWithTransform: success, output size " + dstWidth + "x" + dstHeight);
+            return new CorrectionResult(dstMat, perspectiveMatrix, dstWidth, dstHeight);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to extract and correct mat with transform", e);
+            return null;
+        }
+    }
+
+    /**
      * 提取并校正标签图像
-     * 按照 FairScan 的 extractDocument 实现
      */
     public Bitmap extractAndCorrect(Bitmap source, DetectionResult result) {
         if (source == null || result == null || !result.hasValidCorners()) {
@@ -740,7 +1129,6 @@ public class LabelDetector {
             }
 
             // corners 按角度排序: [0]=topLeft, [1]=topRight, [2]=bottomRight, [3]=bottomLeft
-            // 与 FairScan 的 Quad(topLeft, topRight, bottomRight, bottomLeft) 一致
             PointF topLeft = corners[0];
             PointF topRight = corners[1];
             PointF bottomRight = corners[2];
@@ -753,7 +1141,7 @@ public class LabelDetector {
                     new Point(bottomLeft.x, bottomLeft.y)
             );
 
-            // 计算目标尺寸（与 FairScan 一致）
+            // 计算目标尺寸
             float widthTop = distance(topLeft, topRight);
             float widthBottom = distance(bottomLeft, bottomRight);
             float targetWidth = (widthTop + widthBottom) / 2;

@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 相机预览 -->
+    <androidx.camera.view.PreviewView
+        android:id="@+id/cameraPreviewView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 校正后的图像显示 -->
+    <ImageView
+        android:id="@+id/cameraImageView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
+    <!-- 覆盖层（检测框和内容区域） -->
+    <com.urovo.templatedetector.view.OverlayView
+        android:id="@+id/cameraOverlayView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 分辨率指示器 -->
+    <com.urovo.templatedetector.view.ResolutionIndicatorView
+        android:id="@+id/cameraResolutionIndicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_margin="12dp" />
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="48dp"
+        android:orientation="vertical">
+        <!-- 自动捕获状态指示器 -->
+        <TextView
+            android:id="@+id/cameraAutoCaptureIndicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/indicator_background"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:text="自动捕获 ON" />
+
+        <!-- 置信度指示器 -->
+        <com.urovo.templatedetector.view.ConfidenceIndicatorView
+            android:id="@+id/cameraConfidenceIndicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <!-- 变焦倍数显示 -->
+    <TextView
+        android:id="@+id/cameraZoomIndicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:alpha="0"
+        android:background="@drawable/zoom_indicator_background"
+        android:gravity="center"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="12dp"
+        android:textColor="@android:color/white"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        tools:text="1.0x" />
+
+    <!-- 变焦控制 -->
+    <com.urovo.templatedetector.view.ZoomControlView
+        android:id="@+id/cameraZoomControl"
+        android:layout_width="40dp"
+        android:layout_height="180dp"
+        android:layout_gravity="center_vertical|end"
+        android:layout_marginEnd="12dp" />
+
+    <!-- 加载指示器 -->
+    <FrameLayout
+        android:id="@+id/cameraLoadingContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#80000000"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ProgressBar
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:indeterminate="true" />
+
+            <TextView
+                android:id="@+id/cameraLoadingText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                tools:text="@string/loading" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <!-- 设置按钮 -->
+    <ImageButton
+        android:id="@+id/cameraBtnSettings"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:background="@drawable/ic_settings"
+        android:contentDescription="@string/settings"
+        android:padding="8dp"
+        android:scaleType="centerInside" />
+
+</merge>

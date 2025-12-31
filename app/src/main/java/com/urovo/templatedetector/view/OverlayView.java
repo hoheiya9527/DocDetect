@@ -15,16 +15,17 @@ import android.view.animation.DecelerateInterpolator;
 
 import androidx.annotation.Nullable;
 
-import com.urovo.templatedetector.model.ContentRegion;
-
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 覆盖层View
  * 用于在相机预览上绘制检测框和内容区域
+ * <p>
+ * 线程安全说明：
+ * - 数据修改方法使用 synchronized 保护
+ * - onDraw() 中创建数据的本地副本，避免渲染过程中数据被修改
+ * - 使用 invalidate 节流机制，避免 GPU 渲染队列积压
  */
 public class OverlayView extends View {
 
@@ -39,6 +40,9 @@ public class OverlayView extends View {
     private static final float STROKE_WIDTH_CONTENT = 3f;
     private static final float CORNER_RADIUS = 8f;
 
+    // invalidate 节流：最小间隔 16ms（约 60fps）
+    private static final long MIN_INVALIDATE_INTERVAL_MS = 16;
+
     // Paint对象
     private Paint detectionBoxPaint;
     private Paint contentBorderPaint;
@@ -46,14 +50,33 @@ public class OverlayView extends View {
     //    private Paint cornerPaint;
     private Paint textPaint;
 
-    // 检测框数据
+    // 检测框数据（使用 synchronized 保护）
+    private final Object dataLock = new Object();
     private RectF detectionBox;
     private PointF[] detectionCorners;
     private float detectionAlpha = 0f;
-
+    
     // 内容区域数据
     private List<ContentRegion> contentRegions = new ArrayList<>();
-    private Map<String, Float> regionAlphas = new HashMap<>();
+    
+    /**
+     * 内容区域数据结构
+     */
+    public static class ContentRegion {
+        public final String id;
+        public final RectF bounds;
+        public final PointF[] corners;
+        public final String label;
+        public final boolean hasContent;
+        
+        public ContentRegion(String id, RectF bounds, PointF[] corners, String label, boolean hasContent) {
+            this.id = id;
+            this.bounds = bounds;
+            this.corners = corners;
+            this.label = label;
+            this.hasContent = hasContent;
+        }
+    }
 
     // 对焦动画
     private float focusX = -1f;
@@ -61,9 +84,6 @@ public class OverlayView extends View {
     private float focusAlpha = 0f;
     private ValueAnimator focusAnimator;
     private Paint focusPaint;
-
-    // 点击监听
-    private OnRegionClickListener regionClickListener;
     private float scaleX, scaleY = 1f;
     private int sourceWidth = 1;
     private int sourceHeight = 1;
@@ -74,9 +94,9 @@ public class OverlayView extends View {
     // 是否使用自定义坐标设置（防止被onSizeChanged覆盖）
     private boolean useCustomCoordinates = false;
 
-    public interface OnRegionClickListener {
-        void onRegionClick(ContentRegion region);
-    }
+    // invalidate 节流
+    private long lastInvalidateTime = 0;
+    private boolean pendingInvalidate = false;
 
     public OverlayView(Context context) {
         super(context);
@@ -133,13 +153,38 @@ public class OverlayView extends View {
      * 设置源图像尺寸（用于坐标转换）
      */
     public void setSourceSize(int width, int height) {
-        this.sourceWidth = width;
-        this.sourceHeight = height;
-        this.offsetX = 0;
-        this.offsetY = 0;
-        this.imageScale = 1f;
-        this.useCustomCoordinates = false; // 使用默认坐标计算
-        updateScale();
+        synchronized (dataLock) {
+            this.sourceWidth = width;
+            this.sourceHeight = height;
+            this.offsetX = 0;
+            this.offsetY = 0;
+            this.imageScale = 1f;
+            this.useCustomCoordinates = false; // 使用默认坐标计算
+            updateScaleLocked();
+        }
+    }
+
+    /**
+     * 设置 FILL_CENTER 模式的坐标转换参数
+     *
+     * @param modelWidth  模型输出宽度
+     * @param modelHeight 模型输出高度
+     * @param scaleX      X 方向总缩放（模型坐标 -> View 坐标）
+     * @param scaleY      Y 方向总缩放（模型坐标 -> View 坐标）
+     * @param cropOffsetX X 方向裁剪偏移（正值表示左侧被裁剪）
+     * @param cropOffsetY Y 方向裁剪偏移（正值表示顶部被裁剪）
+     */
+    public void setFillCenterCoordinates(int modelWidth, int modelHeight, float scaleX, float scaleY, int cropOffsetX, int cropOffsetY) {
+        synchronized (dataLock) {
+            this.sourceWidth = modelWidth;
+            this.sourceHeight = modelHeight;
+            this.scaleX = scaleX;
+            this.scaleY = scaleY;
+            this.offsetX = -cropOffsetX;  // 负值，因为裁剪后坐标需要向左/上偏移
+            this.offsetY = -cropOffsetY;
+            this.useCustomCoordinates = true;
+        }
+        throttledInvalidate();
     }
 
     /**
@@ -152,28 +197,39 @@ public class OverlayView extends View {
      * @param scale   图像缩放比例
      */
     public void setSourceSizeWithOffset(int width, int height, int offsetX, int offsetY, float scale) {
-        this.sourceWidth = width;
-        this.sourceHeight = height;
-        this.offsetX = offsetX;
-        this.offsetY = offsetY;
-        this.imageScale = scale;
-        this.useCustomCoordinates = true; // 标记使用自定义坐标
-        // 不调用 updateScale()，直接使用传入的 scale
-        this.scaleX = scale;
-        this.scaleY = scale;
-        invalidate();
+        synchronized (dataLock) {
+            this.sourceWidth = width;
+            this.sourceHeight = height;
+            this.offsetX = offsetX;
+            this.offsetY = offsetY;
+            this.imageScale = scale;
+            this.useCustomCoordinates = true; // 标记使用自定义坐标
+            // 不调用 updateScale()，直接使用传入的 scale
+            this.scaleX = scale;
+            this.scaleY = scale;
+        }
+        throttledInvalidate();
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
         // 只有在未使用自定义坐标时才更新缩放比例
-        if (!useCustomCoordinates) {
-            updateScale();
+        synchronized (dataLock) {
+            if (!useCustomCoordinates) {
+                updateScaleLocked();
+            }
         }
     }
 
     private void updateScale() {
+        synchronized (dataLock) {
+            updateScaleLocked();
+        }
+    }
+
+    // 必须在持有 dataLock 时调用
+    private void updateScaleLocked() {
         if (sourceWidth > 0 && sourceHeight > 0 && getWidth() > 0 && getHeight() > 0) {
             scaleX = (float) getWidth() / sourceWidth;
             scaleY = (float) getHeight() / sourceHeight;
@@ -184,101 +240,126 @@ public class OverlayView extends View {
      * 设置检测框（绿色）
      */
     public void setDetectionBox(RectF box, PointF[] corners) {
-        this.detectionBox = box;
-        this.detectionCorners = corners;
-        this.detectionAlpha = 1f; // 直接设置为不透明，不使用动画
-        invalidate();
+        synchronized (dataLock) {
+            this.detectionBox = box != null ? new RectF(box) : null;
+            this.detectionCorners = corners != null ? copyCorners(corners) : null;
+            this.detectionAlpha = 1f; // 直接设置为不透明，不使用动画
+        }
+        throttledInvalidate();
     }
 
     /**
      * 隐藏检测框
      */
     public void hideDetectionBox() {
-        // 直接清除数据并重绘，不使用动画
-        detectionBox = null;
-        detectionCorners = null;
-        detectionAlpha = 0f;
-
-        invalidate();
+        synchronized (dataLock) {
+            // 直接清除数据并重绘，不使用动画
+            detectionBox = null;
+            detectionCorners = null;
+            detectionAlpha = 0f;
+        }
+        throttledInvalidate();
     }
 
     /**
-     * 设置内容区域（蓝色边框）
+     * 设置内容区域（蓝色框）
+     * @param regions 内容区域列表
      */
     public void setContentRegions(List<ContentRegion> regions) {
-        android.util.Log.d("OverlayView", "setContentRegions called, regions count=" + regions.size());
-        
-        // 取消所有动画，避免频繁重绘
-        if (focusAnimator != null) {
-            focusAnimator.cancel();
+        synchronized (dataLock) {
+            this.contentRegions = regions != null ? new ArrayList<>(regions) : new ArrayList<>();
         }
-        
-        this.contentRegions = new ArrayList<>(regions);
-
-        // 初始化透明度
-        regionAlphas.clear();
-        for (ContentRegion region : regions) {
-            regionAlphas.put(region.getId(), 1f);
-            android.util.Log.d("OverlayView", "setContentRegions: region=" + region.getId() +
-                    ", box=" + region.getBoundingBox() +
-                    ", type=" + region.getType());
-        }
-
-        invalidate();
+        throttledInvalidate();
     }
 
     /**
-     * 更新区域选择状态
+     * 清除内容区域
      */
-    public void updateSelection(String regionId, boolean selected) {
-        for (ContentRegion region : contentRegions) {
-            if (region.getId().equals(regionId)) {
-                region.setSelected(selected);
-                // 直接设置透明度，不使用动画
-                regionAlphas.put(regionId, 1f);
-                invalidate();
-                break;
-            }
+    public void clearContentRegions() {
+        synchronized (dataLock) {
+            this.contentRegions.clear();
         }
+        throttledInvalidate();
     }
+
 
     /**
      * 清除所有绘制
      */
     public void clear() {
-        detectionBox = null;
-        detectionCorners = null;
-        detectionAlpha = 0f;
-        contentRegions.clear();
-        regionAlphas.clear();
+        synchronized (dataLock) {
+            detectionBox = null;
+            detectionCorners = null;
+            detectionAlpha = 0f;
+        }
 
         // 只取消对焦动画（其他动画已移除）
         if (focusAnimator != null) {
             focusAnimator.cancel();
         }
 
-        invalidate();
-    }
-
-    /**
-     * 设置区域点击监听
-     */
-    public void setOnRegionClickListener(OnRegionClickListener listener) {
-        this.regionClickListener = listener;
+        throttledInvalidate();
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
+        // 创建数据的本地副本，避免渲染过程中数据被修改导致 GPU 驱动崩溃
+        RectF localDetectionBox;
+        PointF[] localDetectionCorners;
+        float localDetectionAlpha;
+        float localScaleX, localScaleY;
+        int localOffsetX, localOffsetY;
+        List<ContentRegion> localContentRegions;
+
+        synchronized (dataLock) {
+            localDetectionBox = detectionBox != null ? new RectF(detectionBox) : null;
+            localDetectionCorners = detectionCorners != null ? copyCorners(detectionCorners) : null;
+            localDetectionAlpha = detectionAlpha;
+            localScaleX = scaleX;
+            localScaleY = scaleY;
+            localOffsetX = offsetX;
+            localOffsetY = offsetY;
+            localContentRegions = new ArrayList<>(contentRegions);
+        }
         // 绘制检测框
-        drawDetectionBox(canvas);
-
+        drawDetectionBox(canvas, localDetectionBox, localDetectionCorners, localDetectionAlpha, localScaleX, localScaleY, localOffsetX, localOffsetY);
         // 绘制内容区域
-        drawContentRegions(canvas);
-
+        drawContentRegions(canvas, localContentRegions, localScaleX, localScaleY, localOffsetX, localOffsetY);
         // 绘制对焦动画
         drawFocusAnimation(canvas);
+    }
+
+    /**
+     * 复制角点数组
+     */
+    private PointF[] copyCorners(PointF[] corners) {
+        if (corners == null) return null;
+        PointF[] copy = new PointF[corners.length];
+        for (int i = 0; i < corners.length; i++) {
+            copy[i] = new PointF(corners[i].x, corners[i].y);
+        }
+        return copy;
+    }
+
+    /**
+     * 节流的 invalidate，避免 GPU 渲染队列积压
+     */
+    private void throttledInvalidate() {
+        long now = System.currentTimeMillis();
+        if (now - lastInvalidateTime >= MIN_INVALIDATE_INTERVAL_MS) {
+            lastInvalidateTime = now;
+            pendingInvalidate = false;
+            postInvalidate();
+        } else if (!pendingInvalidate) {
+            pendingInvalidate = true;
+            postDelayed(() -> {
+                pendingInvalidate = false;
+                lastInvalidateTime = System.currentTimeMillis();
+                invalidate();
+            }, MIN_INVALIDATE_INTERVAL_MS - (now - lastInvalidateTime));
+        }
     }
 
     /**
@@ -296,8 +377,7 @@ public class OverlayView extends View {
         float halfSize = size / 2f;
 
         // 外框
-        canvas.drawRect(focusX - halfSize, focusY - halfSize,
-                focusX + halfSize, focusY + halfSize, focusPaint);
+        canvas.drawRect(focusX - halfSize, focusY - halfSize, focusX + halfSize, focusY + halfSize, focusPaint);
 
         // 内部十字线
         float crossSize = size * 0.3f;
@@ -308,133 +388,108 @@ public class OverlayView extends View {
     /**
      * 绘制检测框
      */
-    private void drawDetectionBox(Canvas canvas) {
-        if (detectionBox == null || detectionAlpha <= 0) {
+    private void drawDetectionBox(Canvas canvas, RectF box, PointF[] corners, float alpha, float scaleX, float scaleY, int offsetX, int offsetY) {
+        if (box == null || alpha <= 0) {
             return;
         }
 
-        detectionBoxPaint.setAlpha((int) (255 * detectionAlpha));
+        detectionBoxPaint.setAlpha((int) (255 * alpha));
 
-        if (detectionCorners != null && detectionCorners.length == 4) {
+        if (corners != null && corners.length == 4) {
             // 绘制四边形
             Path path = new Path();
-            PointF first = transformPoint(detectionCorners[0]);
+            PointF first = transformPoint(corners[0], scaleX, scaleY, offsetX, offsetY);
             path.moveTo(first.x, first.y);
             for (int i = 1; i < 4; i++) {
-                PointF p = transformPoint(detectionCorners[i]);
+                PointF p = transformPoint(corners[i], scaleX, scaleY, offsetX, offsetY);
                 path.lineTo(p.x, p.y);
             }
             path.close();
             canvas.drawPath(path, detectionBoxPaint);
         } else {
             // 绘制矩形
-            RectF transformedBox = transformRect(detectionBox);
+            RectF transformedBox = transformRect(box, scaleX, scaleY, offsetX, offsetY);
             canvas.drawRect(transformedBox, detectionBoxPaint);
         }
     }
 
     /**
-     * 绘制内容区域
+     * 绘制内容区域（蓝色框）
      */
-    private void drawContentRegions(Canvas canvas) {
-        for (ContentRegion region : contentRegions) {
-            RectF box = region.getBoundingBox();
-            if (box == null) continue;
+    private void drawContentRegions(Canvas canvas, List<ContentRegion> regions, 
+            float scaleX, float scaleY, int offsetX, int offsetY) {
+        if (regions == null || regions.isEmpty()) {
+            return;
+        }
 
-            android.util.Log.d("OverlayView", "drawContentRegions: region=" + region.getId() +
-                    ", original box=" + box +
-                    ", scaleX=" + scaleX + ", scaleY=" + scaleY +
-                    ", offsetX=" + offsetX + ", offsetY=" + offsetY);
-
-            RectF transformedBox = transformRect(box);
-            android.util.Log.d("OverlayView", "drawContentRegions: transformed box=" + transformedBox);
-
-            Float alpha = regionAlphas.get(region.getId());
-            if (alpha == null) alpha = 1f;
-
-            // 绘制填充（如果选中）
-            if (region.isSelected()) {
-                // 使用更明显的透明度：160 (约63%) 让选中效果更清晰
-                contentFillPaint.setAlpha((int) (160 * alpha));
-                canvas.drawRect(transformedBox, contentFillPaint);
+        for (ContentRegion region : regions) {
+            // 根据是否有内容设置不同透明度
+            int alpha = region.hasContent ? 200 : 120;
+            contentBorderPaint.setAlpha(alpha);
+            
+            if (region.corners != null && region.corners.length == 4) {
+                // 绘制四边形
+                Path path = new Path();
+                PointF first = transformPoint(region.corners[0], scaleX, scaleY, offsetX, offsetY);
+                path.moveTo(first.x, first.y);
+                for (int i = 1; i < 4; i++) {
+                    PointF p = transformPoint(region.corners[i], scaleX, scaleY, offsetX, offsetY);
+                    path.lineTo(p.x, p.y);
+                }
+                path.close();
+                canvas.drawPath(path, contentBorderPaint);
+                
+                // 绘制标签
+                if (region.label != null && !region.label.isEmpty()) {
+                    drawRegionLabel(canvas, region.label, first.x, first.y - 8, region.hasContent);
+                }
+            } else if (region.bounds != null) {
+                // 绘制矩形
+                RectF transformedBox = transformRect(region.bounds, scaleX, scaleY, offsetX, offsetY);
+                canvas.drawRect(transformedBox, contentBorderPaint);
+                
+                // 绘制标签
+                if (region.label != null && !region.label.isEmpty()) {
+                    drawRegionLabel(canvas, region.label, transformedBox.left, transformedBox.top - 8, region.hasContent);
+                }
             }
-
-            // 绘制边框
-            contentBorderPaint.setAlpha((int) (255 * alpha));
-            if (region.isSelected()) {
-                contentBorderPaint.setStrokeWidth(STROKE_WIDTH_CONTENT + 2);
-            } else {
-                contentBorderPaint.setStrokeWidth(STROKE_WIDTH_CONTENT);
-            }
-            canvas.drawRect(transformedBox, contentBorderPaint);
-
-            // 绘制类型标签
-            String label = region.getType() == ContentRegion.ContentType.OCR ? "OCR" : region.getFormat();
-            textPaint.setAlpha((int) (255 * alpha));
-            // 确保标签不会绘制在框外
-            float labelX = Math.max(transformedBox.left + 4, 4);
-            float labelY = Math.max(transformedBox.top - 4, textPaint.getTextSize());
-            canvas.drawText(label, labelX, labelY, textPaint);
         }
     }
 
     /**
-     * 转换点坐标（考虑偏移量）
+     * 绘制区域标签
      */
-    private PointF transformPoint(PointF point) {
+    private void drawRegionLabel(Canvas canvas, String label, float x, float y, boolean hasContent) {
+        textPaint.setTextSize(24f);
+        textPaint.setColor(hasContent ? COLOR_CONTENT_BORDER : Color.GRAY);
+        canvas.drawText(label, x, y, textPaint);
+    }
+
+    /**
+     * 转换点坐标（考虑偏移量）- 使用传入的参数
+     */
+    private PointF transformPoint(PointF point, float scaleX, float scaleY, int offsetX, int offsetY) {
         return new PointF(point.x * scaleX + offsetX, point.y * scaleY + offsetY);
     }
 
     /**
-     * 转换矩形坐标（考虑偏移量）
+     * 转换矩形坐标（考虑偏移量）- 使用传入的参数
      */
-    private RectF transformRect(RectF rect) {
-        return new RectF(
-                rect.left * scaleX + offsetX,
-                rect.top * scaleY + offsetY,
-                rect.right * scaleX + offsetX,
-                rect.bottom * scaleY + offsetY
-        );
+    private RectF transformRect(RectF rect, float scaleX, float scaleY, int offsetX, int offsetY) {
+        return new RectF(rect.left * scaleX + offsetX, rect.top * scaleY + offsetY, rect.right * scaleX + offsetX, rect.bottom * scaleY + offsetY);
     }
 
     /**
      * 反向转换点坐标（屏幕坐标到源坐标，考虑偏移量）
      */
     private PointF inverseTransformPoint(float x, float y) {
-        return new PointF((x - offsetX) / scaleX, (y - offsetY) / scaleY);
+        synchronized (dataLock) {
+            return new PointF((x - offsetX) / scaleX, (y - offsetY) / scaleY);
+        }
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        // 只处理内容区域的点击，其他区域不拦截触摸事件
-        if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            // 检查是否点击了内容区域
-            float x = event.getX();
-            float y = event.getY();
-            PointF sourcePoint = inverseTransformPoint(x, y);
-            for (ContentRegion region : contentRegions) {
-                if (region.contains(sourcePoint.x, sourcePoint.y)) {
-                    return true; // 消费事件，等待 ACTION_UP
-                }
-            }
-            return false; // 不消费事件，让其他View处理
-        }
-
-        if (event.getAction() == MotionEvent.ACTION_UP) {
-            float x = event.getX();
-            float y = event.getY();
-
-            // 检查是否点击了内容区域
-            PointF sourcePoint = inverseTransformPoint(x, y);
-            for (ContentRegion region : contentRegions) {
-                if (region.contains(sourcePoint.x, sourcePoint.y)) {
-                    if (regionClickListener != null) {
-                        regionClickListener.onRegionClick(region);
-                    }
-                    return true;
-                }
-            }
-        }
         return false; // 不消费事件
     }
 
@@ -454,6 +509,7 @@ public class OverlayView extends View {
         focusAnimator.setInterpolator(new DecelerateInterpolator());
         focusAnimator.addUpdateListener(animation -> {
             focusAlpha = (Float) animation.getAnimatedValue();
+            // 对焦动画使用直接 invalidate，因为频率较低
             invalidate();
         });
         focusAnimator.start();

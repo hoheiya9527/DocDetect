@@ -1,0 +1,72 @@
+plugins {
+    alias(libs.plugins.android.library)
+}
+
+android {
+    namespace 'com.urovo.opencv'
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 24
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles "consumer-rules.pro"
+        
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+    
+    packagingOptions {
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+    }
+    
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['sdk/native/libs']
+            java {
+                srcDirs = ['src/main/java', 'sdk/java/src']
+                // 排除 Android UI 相关类（依赖 Camera API，通常不需要）
+                exclude 'org/opencv/android/CameraBridgeViewBase.java'
+                exclude 'org/opencv/android/CameraGLSurfaceView.java'
+                exclude 'org/opencv/android/CameraGLRendererBase.java'
+                exclude 'org/opencv/android/CameraRenderer.java'
+                exclude 'org/opencv/android/Camera2Renderer.java'
+                exclude 'org/opencv/android/JavaCameraView.java'
+                exclude 'org/opencv/android/JavaCamera2View.java'
+                exclude 'org/opencv/android/CameraActivity.java'
+                // 排除 OpenCV Manager 相关类（已废弃）
+                exclude 'org/opencv/android/AsyncServiceHelper.java'
+                exclude 'org/opencv/android/BaseLoaderCallback.java'
+                exclude 'org/opencv/android/LoaderCallbackInterface.java'
+                exclude 'org/opencv/android/InstallCallbackInterface.java'
+                exclude 'org/opencv/android/FpsMeter.java'
+                // 排除 OSGi 和 Engine 相关
+                exclude 'org/opencv/osgi/**'
+                exclude 'org/opencv/engine/**'
+            }
+            res.srcDirs = ['src/main/res', 'sdk/java/res']
+        }
+    }
+}
+
+dependencies {
+    implementation libs.appcompat
+    
+    testImplementation libs.junit
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+}

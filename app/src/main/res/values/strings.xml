@@ -25,20 +25,16 @@
     
     <!-- Image Enhancement -->
     <string name="image_enhancement_settings">Image Enhancement Settings</string>
-    <string name="enable_detection_enhance">Enable Detection Enhancement</string>
-    <string name="enable_recognition_enhance">Enable Recognition Enhancement</string>
-    <string name="light_enhance_strength">Light Enhancement Strength</string>
-    <string name="clahe_clip_limit">CLAHE Clip Limit</string>
-    <string name="clahe_tile_size">CLAHE Tile Size</string>
-    <string name="sharpen_strength">Sharpen Strength</string>
-    <string name="sharpness_threshold">Sharpness Threshold</string>
-    <string name="contrast_threshold">Contrast Threshold</string>
+    <string name="enable_enhance">Enable Enhancement</string>
     
     <!-- Detection Settings -->
     <string name="detection_settings">Detection Settings</string>
     <string name="confidence_threshold">Confidence Threshold (100-1000)</string>
     <string name="enable_auto_capture">Enable Auto Capture</string>
     <string name="auto_capture_threshold">Auto Capture Threshold (100-1000)</string>
+    <string name="auto_capture_on">Auto Capture ON</string>
+    <string name="auto_capture_off">Auto Capture OFF</string>
+    <string name="content_recognition">Content Recognition</string>
     
     <!-- Guidance -->
     <string name="guidance_preview">Please point the camera at the label</string>
@@ -60,6 +56,69 @@
     <string name="select_at_least_one">Please select at least one content region</string>
     
     <!-- Main -->
-    <string name="label_scan">Label Scan</string>
-    <string name="label_scan_description">Scan shipping labels to extract text and barcode content</string>
+    <string name="template_management">Template Management</string>
+    <string name="template_management_description">Create and manage shipping label templates</string>
+    <string name="template_category">Category</string>
+    <string name="template_name">Template Name</string>
+    <string name="template_create">Create Template</string>
+    <string name="template_edit">Edit Template</string>
+    <string name="template_delete">Delete Template</string>
+    <string name="template_delete_confirm">Are you sure you want to delete this template?</string>
+    <string name="template_match">Match Template</string>
+    <string name="template_matching">Matching…</string>
+    <string name="template_match_success">Match successful</string>
+    <string name="template_match_failed">Match failed</string>
+    <string name="template_no_match">No matching template found</string>
+    <string name="template_confidence">Confidence</string>
+    <string name="template_confidence_excellent">Excellent</string>
+    <string name="template_confidence_good">Good</string>
+    <string name="template_confidence_fair">Fair</string>
+    <string name="template_confidence_poor">Poor</string>
+    <string name="template_region">Region</string>
+    <string name="template_region_add">Add Region</string>
+    <string name="template_region_name">Region Name</string>
+    <string name="template_region_type">Region Type</string>
+    <string name="template_region_type_barcode">Barcode</string>
+    <string name="template_region_type_text">Text</string>
+    <string name="template_region_type_image">Image</string>
+    <string name="category_create">Create Category</string>
+    <string name="category_edit">Edit Category</string>
+    <string name="category_delete">Delete Category</string>
+    <string name="category_delete_confirm">Are you sure you want to delete this category and all its templates?</string>
+    <string name="category_name">Category Name</string>
+    <string name="no_categories">No categories</string>
+    <string name="no_templates">No templates</string>
+    <string name="init_database">Initializing database…</string>
+    <string name="init_template_service">Initializing template service…</string>
+    <string name="save">Save</string>
+    <string name="template_region_name_en">Region Name (English)</string>
+    <string name="template_expected_format">Expected Format</string>
+    <string name="template_expected_format_hint">e.g. Code128, QRCode</string>
+    <string name="template_region_required">Required</string>
+    <string name="template_usage_count">Used %d times</string>
+    <string name="template_region_count">%d regions</string>
+    <string name="template_create_from_scan">Create from scan</string>
+    <string name="template_select_category">Select Category</string>
+    <string name="template_input_name">Please input template name</string>
+    <string name="template_save_success">Template saved</string>
+    <string name="template_save_failed">Failed to save template</string>
+    <string name="template_delete_success">Template deleted</string>
+    <string name="region_input_name">Please input region name</string>
+    <string name="region_draw_hint">Tap \"Add Region\" then draw on image</string>
+    <string name="category_name_en">Category Name (English)</string>
+    <string name="template_name_en">Template Name (English)</string>
+    <string name="template_confirm_image">Confirm this image?</string>
+    <string name="template_test">Template Test</string>
+    <string name="template_not_found">Template not found</string>
+    <string name="recognized_content">Recognized Content</string>
+    <string name="content_not_recognized">Not recognized</string>
+    <string name="match_time_format">Time: %dms</string>
+    
+    <!-- Template Region Auto Detection -->
+    <string name="template_name_hint">Template Name</string>
+    <string name="region_auto_name">Region %d</string>
+    <string name="detecting_regions">Detecting regions…</string>
+    <string name="no_regions_detected">No regions detected</string>
+    <string name="region_detection_failed">Region detection failed</string>
+    <string name="content_recognition_desc">Template matching to identify specified content.</string>
 </resources>

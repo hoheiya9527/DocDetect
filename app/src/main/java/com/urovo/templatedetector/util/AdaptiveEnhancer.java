@@ -44,22 +44,6 @@ public class AdaptiveEnhancer {
         public double getContrast() { return contrast; }
         public double getBrightness() { return brightness; }
 
-        /**
-         * 判断是否需要轻量增强
-         */
-        public boolean needsLightEnhancement(CameraSettings.EnhanceConfig config) {
-            return sharpness < config.getSharpnessThreshold() || 
-                   contrast < config.getContrastThreshold();
-        }
-
-        /**
-         * 判断是否需要完整增强
-         */
-        public boolean needsFullEnhancement(CameraSettings.EnhanceConfig config) {
-            return sharpness < config.getSharpnessThreshold() * 0.7 || 
-                   contrast < config.getContrastThreshold() * 0.7;
-        }
-
         @Override
         public String toString() {
             return String.format("QualityMetrics{sharpness=%.1f, contrast=%.3f, brightness=%.1f}", 
@@ -177,58 +161,21 @@ public class AdaptiveEnhancer {
     }
 
     /**
-     * 轻量级增强（用于检测阶段）
+     * 完整增强（使用默认参数）
      */
-    public static Bitmap lightEnhance(Bitmap input, CameraSettings.EnhanceConfig config) {
-        if (input == null || input.isRecycled()) {
-            return null;
-        }
-
-        Mat mat = null;
-        try (PerformanceTracker.Timer timer = new PerformanceTracker.Timer(PerformanceTracker.MetricType.LIGHT_ENHANCE)) {
-            mat = new Mat();
-            Utils.bitmapToMat(input, mat);
-
-            // 简单的对比度和亮度调整
-            float alpha = 1.0f + config.getLightEnhanceStrength(); // 对比度
-            float beta = config.getLightEnhanceStrength() * 10;     // 亮度
-
-            mat.convertTo(mat, -1, alpha, beta);
-
-            Bitmap result = Bitmap.createBitmap(input.getWidth(), input.getHeight(), input.getConfig());
-            Utils.matToBitmap(mat, result);
-            return result;
-
-        } catch (Exception e) {
-            Log.e(TAG, "Light enhancement failed", e);
-            return input;
-        } finally {
-            if (mat != null) mat.release();
-        }
-    }
-
-    /**
-     * 完整增强（用于识别阶段）
-     */
-    public static Bitmap fullEnhance(Bitmap input, CameraSettings.EnhanceConfig config) {
+    public static Bitmap fullEnhance(Bitmap input) {
         if (input == null || input.isRecycled()) {
             return null;
         }
 
         try (PerformanceTracker.Timer timer = new PerformanceTracker.Timer(PerformanceTracker.MetricType.FULL_ENHANCE)) {
-            // 使用现有的ImageEnhancer实现
-            ImageEnhancer.EnhanceParams params = new ImageEnhancer.EnhanceParams();
-            params.claheClipLimit = config.getClaheClipLimit();
-            params.claheTileSize = config.getClaheTileSize();
-            params.sharpenStrength = config.getSharpenStrength();
-
-            // 转换为JPEG字节数组进行处理
+            // 使用ImageEnhancer的默认参数
             byte[] jpegData = bitmapToJpeg(input);
             if (jpegData == null) {
                 return input;
             }
 
-            byte[] enhancedData = ImageEnhancer.enhance(jpegData, params);
+            byte[] enhancedData = ImageEnhancer.enhance(jpegData);
             if (enhancedData == null) {
                 return input;
             }
@@ -242,45 +189,20 @@ public class AdaptiveEnhancer {
     }
 
     /**
-     * 智能增强（根据质量自动选择策略）
+     * 智能增强（根据配置开关决定是否增强）
      */
-    public static Bitmap smartEnhance(Bitmap input, CameraSettings.EnhanceConfig config, boolean isDetectionStage) {
+    public static Bitmap smartEnhance(Bitmap input, CameraSettings.EnhanceConfig config) {
         if (input == null || input.isRecycled() || config == null) {
             return input;
         }
 
-        // 检测阶段只允许轻量增强
-        if (isDetectionStage && !config.isEnableDetectionEnhance()) {
+        // 检查增强开关
+        if (!config.isEnableEnhance()) {
             return input;
         }
 
-        // 识别阶段检查完整增强开关
-        if (!isDetectionStage && !config.isEnableRecognitionEnhance()) {
-            return input;
-        }
-
-        QualityMetrics quality = assessQuality(input);
-        Log.d(TAG, "Image quality: " + quality);
-
-        if (isDetectionStage) {
-            // 检测阶段：只进行轻量增强
-            if (quality.needsLightEnhancement(config)) {
-                Log.d(TAG, "Applying light enhancement for detection");
-                return lightEnhance(input, config);
-            }
-        } else {
-            // 识别阶段：根据质量选择增强策略
-            if (quality.needsFullEnhancement(config)) {
-                Log.d(TAG, "Applying full enhancement for recognition");
-                return fullEnhance(input, config);
-            } else if (quality.needsLightEnhancement(config)) {
-                Log.d(TAG, "Applying light enhancement for recognition");
-                return lightEnhance(input, config);
-            }
-        }
-
-        Log.d(TAG, "No enhancement needed");
-        return input;
+        Log.d(TAG, "Applying enhancement with default parameters");
+        return fullEnhance(input);
     }
 
     /**

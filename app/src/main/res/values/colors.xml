@@ -2,4 +2,13 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    
+    <!-- 置信度颜色 -->
+    <color name="confidence_high">#4CAF50</color>
+    <color name="confidence_medium">#FF9800</color>
+    <color name="confidence_low">#F44336</color>
+    
+    <!-- 内容识别状态颜色 -->
+    <color name="content_recognized">#212121</color>
+    <color name="content_not_recognized">#9E9E9E</color>
 </resources>

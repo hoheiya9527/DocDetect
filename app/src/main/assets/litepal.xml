@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<litepal>
+    <dbname value="template_detector" />
+    <version value="1" />
+    <list>
+        <mapping class="com.urovo.templatedetector.model.TemplateCategory" />
+        <mapping class="com.urovo.templatedetector.model.Template" />
+        <mapping class="com.urovo.templatedetector.model.TemplateRegion" />
+    </list>
+</litepal>

@@ -8,9 +8,11 @@ import android.util.Log;
 import com.urovo.templatedetector.decoder.BarcodeDecoder;
 import com.urovo.templatedetector.decoder.DecoderFactory;
 import com.urovo.templatedetector.detector.LabelDetector;
+import com.urovo.templatedetector.matcher.TemplateMatchingService;
 import com.urovo.templatedetector.ocr.OCREngine;
 import com.urovo.templatedetector.ocr.OCREngineFactory;
 
+import org.litepal.LitePal;
 import org.opencv.android.OpenCVLoader;
 
 /**
@@ -41,6 +43,7 @@ public class AppInitializer {
     private LabelDetector labelDetector;
     private OCREngine ocrEngine;
     private BarcodeDecoder barcodeDecoder;
+    private TemplateMatchingService templateMatchingService;
 
     private AppInitializer(Context context) {
         this.context = context.getApplicationContext();
@@ -73,8 +76,20 @@ public class AppInitializer {
 
         isInitializing = true;
 
+        // 步骤0：初始化 LitePal 数据库
+        postProgress(callback, 0, "正在初始化数据库...");
+        try {
+            LitePal.initialize(context);
+            Log.d(TAG, "LitePal initialized");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to initialize LitePal", e);
+            isInitializing = false;
+            callback.onComplete(false, "数据库初始化失败: " + e.getMessage());
+            return;
+        }
+
         // 步骤1：在主线程初始化OpenCV和条码解码器（有线程限制）
-        postProgress(callback, 0, "正在初始化OpenCV...");
+        postProgress(callback, 10, "正在初始化OpenCV...");
 
         boolean opencvSuccess = OpenCVLoader.initDebug();
         if (!opencvSuccess) {
@@ -110,14 +125,21 @@ public class AppInitializer {
                 Log.d(TAG, "LabelDetector initialized");
                 postProgress(callback, 60, "正在初始化OCR引擎...");
 
-//                // 初始化OCR引擎
-//                ocrEngine = OCREngineFactory.create(OCREngine.EngineType.PADDLE_OCR, context);
-//                if (!ocrEngine.initialize()) {
-//                    postComplete(callback, false, "OCR引擎初始化失败");
-//                    return;
-//                }
-//                Log.d(TAG, "OCREngine initialized");
-//                postProgress(callback, 100, "初始化完成");
+                // 初始化OCR引擎 (ML Kit)
+                ocrEngine = OCREngineFactory.create(OCREngine.EngineType.ML_KIT, context);
+                if (!ocrEngine.initialize()) {
+                    postComplete(callback, false, "OCR引擎初始化失败");
+                    return;
+                }
+                Log.d(TAG, "OCREngine initialized: " + ocrEngine.getEngineName());
+
+                postProgress(callback, 80, "正在初始化模板匹配服务...");
+
+                // 初始化模板匹配服务
+                templateMatchingService = TemplateMatchingService.getInstance(context);
+                Log.d(TAG, "TemplateMatchingService initialized");
+
+                postProgress(callback, 100, "初始化完成");
 
                 isInitialized = true;
                 isInitializing = false;
@@ -155,6 +177,10 @@ public class AppInitializer {
         return barcodeDecoder;
     }
 
+    public TemplateMatchingService getTemplateMatchingService() {
+        return templateMatchingService;
+    }
+
     /**
      * 释放所有资源
      */
@@ -170,6 +196,10 @@ public class AppInitializer {
         if (barcodeDecoder != null) {
             barcodeDecoder.release();
             barcodeDecoder = null;
+        }
+        if (templateMatchingService != null) {
+            templateMatchingService.release();
+            templateMatchingService = null;
         }
         isInitialized = false;
         instance = null;

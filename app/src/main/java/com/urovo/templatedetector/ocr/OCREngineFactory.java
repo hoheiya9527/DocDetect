@@ -2,7 +2,7 @@ package com.urovo.templatedetector.ocr;
 
 import android.content.Context;
 
-import com.urovo.templatedetector.ocr.paddle.PaddleOCREngine;
+import com.urovo.templatedetector.ocr.mlkit.MLKitOCREngine;
 
 /**
  * OCR引擎工厂
@@ -16,16 +16,17 @@ public final class OCREngineFactory {
 
     /**
      * 创建OCR引擎
-     * @param type 引擎类型
+     *
+     * @param type    引擎类型
      * @param context 上下文
      * @return OCR引擎实例
      */
     public static OCREngine create(OCREngine.EngineType type, Context context) {
         switch (type) {
-            case PADDLE_OCR:
-                return new PaddleOCREngine(context);
+//            case PADDLE_OCR:
+//                return new PaddleOCREngine(context);
             case ML_KIT:
-                throw new UnsupportedOperationException("ML Kit OCR engine not implemented yet");
+                return new MLKitOCREngine(context);
             case TESSERACT:
                 throw new UnsupportedOperationException("Tesseract OCR engine not implemented yet");
             case CUSTOM:
@@ -36,11 +37,12 @@ public final class OCREngineFactory {
     }
 
     /**
-     * 创建默认OCR引擎 (PaddleOCR)
+     * 创建默认OCR引擎 (ML Kit)
+     *
      * @param context 上下文
      * @return OCR引擎实例
      */
     public static OCREngine createDefault(Context context) {
-        return create(OCREngine.EngineType.PADDLE_OCR, context);
+        return create(OCREngine.EngineType.ML_KIT, context);
     }
 }

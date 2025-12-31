@@ -16,14 +16,17 @@ import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.urovo.templatedetector.init.AppInitializer;
+import com.urovo.templatedetector.ui.TemplateListActivity;
+import com.urovo.templatedetector.ui.TemplateTestActivity;
 
 /**
  * 主界面Activity
- * 提供面单扫描功能入口，并在启动时初始化所有组件
+ * 提供模板管理功能入口，并在启动时初始化所有组件
  */
 public class MainActivity extends AppCompatActivity {
 
-    private MaterialButton btnLabelScan;
+    private MaterialButton btnTemplateManagement;
+    private MaterialButton btnContentRecognition;
     private LinearLayout initContainer;
     private ProgressBar initProgress;
     private TextView initStatusText;
@@ -45,13 +48,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initViews() {
-        btnLabelScan = findViewById(R.id.btnLabelScan);
+        btnTemplateManagement = findViewById(R.id.btnTemplateManagement);
+        btnContentRecognition = findViewById(R.id.btnContentRecognition);
         initContainer = findViewById(R.id.initContainer);
         initProgress = findViewById(R.id.initProgress);
         initStatusText = findViewById(R.id.initStatusText);
 
-        btnLabelScan.setOnClickListener(v -> startLabelScan());
-        btnLabelScan.setEnabled(false);
+        btnTemplateManagement.setOnClickListener(v -> startTemplateManagement());
+        btnContentRecognition.setOnClickListener(v -> startContentRecognition());
+        btnTemplateManagement.setEnabled(false);
+        btnContentRecognition.setEnabled(false);
     }
 
     /**
@@ -90,7 +96,8 @@ public class MainActivity extends AppCompatActivity {
      */
     private void onInitComplete() {
         initContainer.setVisibility(View.GONE);
-        btnLabelScan.setEnabled(true);
+        btnTemplateManagement.setEnabled(true);
+        btnContentRecognition.setEnabled(true);
     }
 
     /**
@@ -103,14 +110,27 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * 启动面单扫描Activity
+     * 启动模板管理Activity
      */
-    private void startLabelScan() {
+    private void startTemplateManagement() {
         if (!AppInitializer.getInstance(this).isInitialized()) {
             Toast.makeText(this, R.string.initializing, Toast.LENGTH_SHORT).show();
             return;
         }
-        Intent intent = new Intent(this, LabelScanActivity.class);
+        Intent intent = new Intent(this, TemplateListActivity.class);
+        startActivity(intent);
+    }
+
+    /**
+     * 启动内容识别Activity（多模板匹配模式）
+     */
+    private void startContentRecognition() {
+        if (!AppInitializer.getInstance(this).isInitialized()) {
+            Toast.makeText(this, R.string.initializing, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent intent = new Intent(this, TemplateTestActivity.class);
+        // 不传 templateId，进入多模板匹配模式
         startActivity(intent);
     }
 }

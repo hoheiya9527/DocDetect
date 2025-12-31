@@ -30,61 +30,19 @@ public class CameraSettings {
      * 图像增强配置
      */
     public static class EnhanceConfig {
-        private boolean enableDetectionEnhance = false;      // 检测阶段增强开关
-        private boolean enableRecognitionEnhance = true;     // 识别阶段增强开关
-        private float lightEnhanceStrength = 0.2f;           // 轻量增强强度 (0.0-1.0)
-        private float claheClipLimit = 2.0f;                 // CLAHE限制 (1.0-4.0)
-        private int claheTileSize = 16;                      // CLAHE网格大小 (4-32)
-        private float sharpenStrength = 0.2f;                // 锐化强度 (0.0-1.0)
-        private double sharpnessThreshold = 100.0;           // 清晰度阈值
-        private double contrastThreshold = 0.3;              // 对比度阈值
+        private boolean enableEnhance = true;  // 增强开关
 
-        public boolean isEnableDetectionEnhance() { return enableDetectionEnhance; }
-        public void setEnableDetectionEnhance(boolean enable) { this.enableDetectionEnhance = enable; }
-
-        public boolean isEnableRecognitionEnhance() { return enableRecognitionEnhance; }
-        public void setEnableRecognitionEnhance(boolean enable) { this.enableRecognitionEnhance = enable; }
-
-        public float getLightEnhanceStrength() { return lightEnhanceStrength; }
-        public void setLightEnhanceStrength(float strength) { 
-            this.lightEnhanceStrength = Math.max(0.0f, Math.min(1.0f, strength)); 
+        public boolean isEnableEnhance() { 
+            return enableEnhance; 
         }
-
-        public float getClaheClipLimit() { return claheClipLimit; }
-        public void setClaheClipLimit(float limit) { 
-            this.claheClipLimit = Math.max(1.0f, Math.min(4.0f, limit)); 
-        }
-
-        public int getClaheTileSize() { return claheTileSize; }
-        public void setClaheTileSize(int size) { 
-            this.claheTileSize = Math.max(4, Math.min(32, size)); 
-        }
-
-        public float getSharpenStrength() { return sharpenStrength; }
-        public void setSharpenStrength(float strength) { 
-            this.sharpenStrength = Math.max(0.0f, Math.min(1.0f, strength)); 
-        }
-
-        public double getSharpnessThreshold() { return sharpnessThreshold; }
-        public void setSharpnessThreshold(double threshold) { 
-            this.sharpnessThreshold = Math.max(50.0, Math.min(300.0, threshold)); 
-        }
-
-        public double getContrastThreshold() { return contrastThreshold; }
-        public void setContrastThreshold(double threshold) { 
-            this.contrastThreshold = Math.max(0.1, Math.min(1.0, threshold)); 
+        
+        public void setEnableEnhance(boolean enable) { 
+            this.enableEnhance = enable; 
         }
 
         public EnhanceConfig copy() {
             EnhanceConfig copy = new EnhanceConfig();
-            copy.enableDetectionEnhance = this.enableDetectionEnhance;
-            copy.enableRecognitionEnhance = this.enableRecognitionEnhance;
-            copy.lightEnhanceStrength = this.lightEnhanceStrength;
-            copy.claheClipLimit = this.claheClipLimit;
-            copy.claheTileSize = this.claheTileSize;
-            copy.sharpenStrength = this.sharpenStrength;
-            copy.sharpnessThreshold = this.sharpnessThreshold;
-            copy.contrastThreshold = this.contrastThreshold;
+            copy.enableEnhance = this.enableEnhance;
             return copy;
         }
     }
@@ -110,7 +68,7 @@ public class CameraSettings {
         this.zoomRatio = 1.0f;
         this.enhanceConfig = new EnhanceConfig();
         this.confidenceThreshold = 0.99; // 默认置信度阈值99%
-        this.autoCapture = false; // 默认关闭自动捕获
+        this.autoCapture = true; // 默认开启自动捕获
         this.autoCaptureThreshold = 0.998; // 默认自动捕获阈值99.8%
     }
 

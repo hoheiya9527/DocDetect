@@ -6,16 +6,23 @@ import android.graphics.RectF;
 
 /**
  * 标签检测结果
+ * 
+ * 坐标系统说明
+ * - cornerPoints: 模型坐标系 (256x256)，用于显示检测框
+ * - originalCornerPoints: 图像坐标系，用于透视校正裁剪
+ * - modelWidth/modelHeight: 模型输出尺寸，用于坐标缩放
  */
 public class DetectionResult {
 
     private final boolean detected;
-    private final PointF[] cornerPoints;        // 扩展后的角点（用于显示）
-    private final PointF[] originalCornerPoints; // 原始角点（用于裁剪）
+    private final PointF[] cornerPoints;        // 模型坐标系的角点（用于显示）
+    private final PointF[] originalCornerPoints; // 图像坐标系的角点（用于裁剪）
     private final RectF boundingBox;
     private final Bitmap segmentationMask;
     private final float confidence;
     private final float rotationAngle;
+    private final int modelWidth;   // 模型输出宽度
+    private final int modelHeight;  // 模型输出高度
 
     private DetectionResult(Builder builder) {
         this.detected = builder.detected;
@@ -25,6 +32,8 @@ public class DetectionResult {
         this.segmentationMask = builder.segmentationMask;
         this.confidence = builder.confidence;
         this.rotationAngle = builder.rotationAngle;
+        this.modelWidth = builder.modelWidth;
+        this.modelHeight = builder.modelHeight;
     }
 
     /**
@@ -42,7 +51,7 @@ public class DetectionResult {
     }
 
     /**
-     * 获取四角点坐标（扩展后，用于显示检测框）
+     * 获取四角点坐标（模型坐标系，用于显示检测框）
      * 顺序: 左上、右上、右下、左下
      */
     public PointF[] getCornerPoints() {
@@ -50,7 +59,7 @@ public class DetectionResult {
     }
 
     /**
-     * 获取原始四角点坐标（未扩展，用于透视校正裁剪）
+     * 获取原始四角点坐标（图像坐标系，用于透视校正裁剪）
      * 顺序: 左上、右上、右下、左下
      */
     public PointF[] getOriginalCornerPoints() {
@@ -84,6 +93,20 @@ public class DetectionResult {
     public float getRotationAngle() {
         return rotationAngle;
     }
+    
+    /**
+     * 获取模型输出宽度
+     */
+    public int getModelWidth() {
+        return modelWidth;
+    }
+    
+    /**
+     * 获取模型输出高度
+     */
+    public int getModelHeight() {
+        return modelHeight;
+    }
 
     /**
      * 检查角点是否有效
@@ -103,6 +126,8 @@ public class DetectionResult {
         private Bitmap segmentationMask;
         private float confidence = 0f;
         private float rotationAngle = 0f;
+        private int modelWidth = 256;
+        private int modelHeight = 256;
 
         public Builder setDetected(boolean detected) {
             this.detected = detected;
@@ -136,6 +161,12 @@ public class DetectionResult {
 
         public Builder setRotationAngle(float rotationAngle) {
             this.rotationAngle = rotationAngle;
+            return this;
+        }
+        
+        public Builder setModelSize(int width, int height) {
+            this.modelWidth = width;
+            this.modelHeight = height;
             return this;
         }
 

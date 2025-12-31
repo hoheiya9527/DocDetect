@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">面单检测器</string>
+    <string name="app_name">面单检测</string>
     
     <!-- Common -->
     <string name="ok">确定</string>
@@ -18,10 +18,24 @@
     
     <!-- Camera -->
     <string name="camera_settings">设置</string>
+    <string name="basic_camera_settings">基础相机设置</string>
     <string name="resolution">分辨率</string>
     <string name="focus_mode">对焦模式</string>
     <string name="exposure_compensation">曝光补偿</string>
     <string name="iso">ISO</string>
+    
+    <!-- Image Enhancement -->
+    <string name="image_enhancement_settings">图像增强设置</string>
+    <string name="enable_enhance">启用增强</string>
+    
+    <!-- Detection Settings -->
+    <string name="detection_settings">检测设置</string>
+    <string name="confidence_threshold">置信度阈值 (100-1000)</string>
+    <string name="enable_auto_capture">启用自动捕获</string>
+    <string name="auto_capture_threshold">自动捕获阈值 (100-1000)</string>
+    <string name="auto_capture_on">自动捕获 ON</string>
+    <string name="auto_capture_off">自动捕获 OFF</string>
+    <string name="content_recognition">内容识别</string>
     
     <!-- Guidance -->
     <string name="guidance_preview">请将相机对准面单标签</string>
@@ -43,6 +57,69 @@
     <string name="select_at_least_one">请至少选择一个内容区域</string>
     
     <!-- Main -->
-    <string name="label_scan">面单扫描</string>
-    <string name="label_scan_description">扫描面单标签，提取文字和条码内容</string>
+    <string name="template_management">模板管理</string>
+    <string name="template_management_description">创建和管理面单模板</string>
+    <string name="template_category">分类</string>
+    <string name="template_name">模板名称</string>
+    <string name="template_create">创建模板</string>
+    <string name="template_edit">编辑模板</string>
+    <string name="template_delete">删除模板</string>
+    <string name="template_delete_confirm">确定要删除此模板吗？</string>
+    <string name="template_match">模板匹配</string>
+    <string name="template_matching">匹配中…</string>
+    <string name="template_match_success">匹配成功</string>
+    <string name="template_match_failed">匹配失败</string>
+    <string name="template_no_match">未找到匹配的模板</string>
+    <string name="template_confidence">置信度</string>
+    <string name="template_confidence_excellent">优秀</string>
+    <string name="template_confidence_good">良好</string>
+    <string name="template_confidence_fair">一般</string>
+    <string name="template_confidence_poor">差</string>
+    <string name="template_region">区域</string>
+    <string name="template_region_add">添加区域</string>
+    <string name="template_region_name">区域名称</string>
+    <string name="template_region_type">区域类型</string>
+    <string name="template_region_type_barcode">条码</string>
+    <string name="template_region_type_text">文字</string>
+    <string name="template_region_type_image">图片</string>
+    <string name="category_create">创建分类</string>
+    <string name="category_edit">编辑分类</string>
+    <string name="category_delete">删除分类</string>
+    <string name="category_delete_confirm">确定要删除此分类及其所有模板吗？</string>
+    <string name="category_name">分类名称</string>
+    <string name="no_categories">暂无分类</string>
+    <string name="no_templates">暂无模板</string>
+    <string name="init_database">正在初始化数据库…</string>
+    <string name="init_template_service">正在初始化模板服务…</string>
+    <string name="save">保存</string>
+    <string name="template_region_name_en">区域名称（英文）</string>
+    <string name="template_expected_format">预期格式</string>
+    <string name="template_expected_format_hint">如：Code128、QRCode</string>
+    <string name="template_region_required">必填</string>
+    <string name="template_usage_count">使用 %d 次</string>
+    <string name="template_region_count">%d 个区域</string>
+    <string name="template_create_from_scan">从扫描创建</string>
+    <string name="template_select_category">选择分类</string>
+    <string name="template_input_name">请输入模板名称</string>
+    <string name="template_save_success">模板已保存</string>
+    <string name="template_save_failed">保存模板失败</string>
+    <string name="template_delete_success">模板已删除</string>
+    <string name="region_input_name">请输入区域名称</string>
+    <string name="region_draw_hint">点击"添加区域"后在图片上绘制</string>
+    <string name="category_name_en">分类名称（英文）</string>
+    <string name="template_name_en">模板名称（英文）</string>
+    <string name="template_confirm_image">确认使用此图片？</string>
+    <string name="template_test">模板测试</string>
+    <string name="template_not_found">模板不存在</string>
+    <string name="recognized_content">识别内容</string>
+    <string name="content_not_recognized">未识别</string>
+    <string name="match_time_format">耗时: %dms</string>
+    
+    <!-- Template Region Auto Detection -->
+    <string name="template_name_hint">模板名称</string>
+    <string name="region_auto_name">区域 %d</string>
+    <string name="detecting_regions">正在识别区域…</string>
+    <string name="no_regions_detected">未检测到区域</string>
+    <string name="region_detection_failed">区域识别失败</string>
+    <string name="content_recognition_desc">进行面单模板匹配识别指定内容</string>
 </resources>

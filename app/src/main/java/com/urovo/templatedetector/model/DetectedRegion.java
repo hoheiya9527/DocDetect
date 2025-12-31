@@ -6,21 +6,24 @@ import android.graphics.RectF;
 import java.util.UUID;
 
 /**
- * 内容区域模型
- * 表示检测到的文字或条码区域
+ * 检测区域模型
+ * 表示通过 OCR 或条码解码检测到的区域
+ * 用于 ContentExtractor 输出和 RegionDrawView 显示
  */
-public class ContentRegion {
+public class DetectedRegion {
 
     /**
-     * 内容类型
+     * 区域类型
      */
-    public enum ContentType {
-        OCR,      // 文字识别
-        BARCODE   // 条码
+    public enum Type {
+        /** 条码/二维码 */
+        BARCODE,
+        /** 文字（OCR） */
+        TEXT
     }
 
     private final String id;
-    private final ContentType type;
+    private final Type type;
     private final String content;
     private final String format;
     private final RectF boundingBox;
@@ -28,8 +31,8 @@ public class ContentRegion {
     private final float confidence;
     private boolean selected;
 
-    public ContentRegion(ContentType type, String content, String format,
-                         RectF boundingBox, PointF[] cornerPoints, float confidence) {
+    public DetectedRegion(Type type, String content, String format,
+                          RectF boundingBox, PointF[] cornerPoints, float confidence) {
         this.id = UUID.randomUUID().toString();
         this.type = type;
         this.content = content;
@@ -48,9 +51,9 @@ public class ContentRegion {
     }
 
     /**
-     * 获取内容类型
+     * 获取区域类型
      */
-    public ContentType getType() {
+    public Type getType() {
         return type;
     }
 
@@ -111,24 +114,31 @@ public class ContentRegion {
     }
 
     /**
-     * 获取格式化显示字符串
-     * 格式: [TYPE]content
-     */
-    public String getFormattedDisplay() {
-        String typeLabel = type == ContentType.OCR ? "OCR" : format;
-        return "[" + typeLabel + "] " + content;
-    }
-
-    /**
      * 检查点是否在区域内
      */
     public boolean contains(float x, float y) {
         return boundingBox != null && boundingBox.contains(x, y);
     }
 
+    /**
+     * 转换为 TemplateRegion
+     */
+    public TemplateRegion toTemplateRegion(String name, long templateId) {
+        TemplateRegion.RegionType regionType = (type == Type.BARCODE)
+                ? TemplateRegion.RegionType.BARCODE
+                : TemplateRegion.RegionType.TEXT;
+        
+        TemplateRegion region = new TemplateRegion(name, templateId, regionType);
+        region.setBoundingBox(boundingBox);
+        if (cornerPoints != null) {
+            region.setCornerPoints(cornerPoints);
+        }
+        return region;
+    }
+
     @Override
     public String toString() {
-        return "ContentRegion{" +
+        return "DetectedRegion{" +
                 "id='" + id + '\'' +
                 ", type=" + type +
                 ", content='" + content + '\'' +

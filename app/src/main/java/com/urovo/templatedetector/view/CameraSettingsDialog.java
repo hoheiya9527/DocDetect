@@ -41,20 +41,7 @@ public class CameraSettingsDialog extends DialogFragment {
     private Spinner spinnerIso;
 
     // 图像增强设置控件
-    private CheckBox checkBoxDetectionEnhance;
-    private CheckBox checkBoxRecognitionEnhance;
-    private SeekBar seekBarLightEnhanceStrength;
-    private TextView lightEnhanceStrengthValue;
-    private SeekBar seekBarClaheClipLimit;
-    private TextView claheClipLimitValue;
-    private SeekBar seekBarClaheTileSize;
-    private TextView claheTileSizeValue;
-    private SeekBar seekBarSharpenStrength;
-    private TextView sharpenStrengthValue;
-    private SeekBar seekBarSharpnessThreshold;
-    private TextView sharpnessThresholdValue;
-    private SeekBar seekBarContrastThreshold;
-    private TextView contrastThresholdValue;
+    private CheckBox checkBoxEnableEnhance;
 
     // 检测设置控件
     private EditText editTextConfidenceThreshold;
@@ -120,20 +107,7 @@ public class CameraSettingsDialog extends DialogFragment {
         spinnerIso = view.findViewById(R.id.spinnerIso);
 
         // 图像增强设置控件
-        checkBoxDetectionEnhance = view.findViewById(R.id.checkBoxDetectionEnhance);
-        checkBoxRecognitionEnhance = view.findViewById(R.id.checkBoxRecognitionEnhance);
-        seekBarLightEnhanceStrength = view.findViewById(R.id.seekBarLightEnhanceStrength);
-        lightEnhanceStrengthValue = view.findViewById(R.id.lightEnhanceStrengthValue);
-        seekBarClaheClipLimit = view.findViewById(R.id.seekBarClaheClipLimit);
-        claheClipLimitValue = view.findViewById(R.id.claheClipLimitValue);
-        seekBarClaheTileSize = view.findViewById(R.id.seekBarClaheTileSize);
-        claheTileSizeValue = view.findViewById(R.id.claheTileSizeValue);
-        seekBarSharpenStrength = view.findViewById(R.id.seekBarSharpenStrength);
-        sharpenStrengthValue = view.findViewById(R.id.sharpenStrengthValue);
-        seekBarSharpnessThreshold = view.findViewById(R.id.seekBarSharpnessThreshold);
-        sharpnessThresholdValue = view.findViewById(R.id.sharpnessThresholdValue);
-        seekBarContrastThreshold = view.findViewById(R.id.seekBarContrastThreshold);
-        contrastThresholdValue = view.findViewById(R.id.contrastThresholdValue);
+        checkBoxEnableEnhance = view.findViewById(R.id.checkBoxEnableEnhance);
 
         // 检测设置控件
         editTextConfidenceThreshold = view.findViewById(R.id.editTextConfidenceThreshold);
@@ -190,101 +164,7 @@ public class CameraSettingsDialog extends DialogFragment {
     }
 
     private void initEnhanceControls() {
-        // 轻量增强强度 (0.0-1.0)
-        seekBarLightEnhanceStrength.setMax(100);
-        seekBarLightEnhanceStrength.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                float value = progress / 100.0f;
-                lightEnhanceStrengthValue.setText(String.format("%.2f", value));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-
-        // CLAHE限制 (1.0-4.0)
-        seekBarClaheClipLimit.setMax(300);
-        seekBarClaheClipLimit.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                float value = 1.0f + (progress / 100.0f);
-                claheClipLimitValue.setText(String.format("%.1f", value));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-
-        // CLAHE网格大小 (4-32)
-        seekBarClaheTileSize.setMax(28);
-        seekBarClaheTileSize.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                int value = 4 + progress;
-                claheTileSizeValue.setText(String.valueOf(value));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-
-        // 锐化强度 (0.0-1.0)
-        seekBarSharpenStrength.setMax(100);
-        seekBarSharpenStrength.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                float value = progress / 100.0f;
-                sharpenStrengthValue.setText(String.format("%.2f", value));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-
-        // 清晰度阈值 (50-300)
-        seekBarSharpnessThreshold.setMax(250);
-        seekBarSharpnessThreshold.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                double value = 50.0 + progress;
-                sharpnessThresholdValue.setText(String.format("%.0f", value));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-
-        // 对比度阈值 (0.1-1.0)
-        seekBarContrastThreshold.setMax(90);
-        seekBarContrastThreshold.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                double value = 0.1 + (progress / 100.0);
-                contrastThresholdValue.setText(String.format("%.2f", value));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
+        // 增强开关无需额外初始化
     }
 
     private void initDetectionControls() {
@@ -406,39 +286,7 @@ public class CameraSettingsDialog extends DialogFragment {
 
     private void populateEnhanceSettings() {
         CameraSettings.EnhanceConfig enhance = currentSettings.getEnhanceConfig();
-
-        // 增强开关
-        checkBoxDetectionEnhance.setChecked(enhance.isEnableDetectionEnhance());
-        checkBoxRecognitionEnhance.setChecked(enhance.isEnableRecognitionEnhance());
-
-        // 轻量增强强度
-        int lightStrengthProgress = (int) (enhance.getLightEnhanceStrength() * 100);
-        seekBarLightEnhanceStrength.setProgress(lightStrengthProgress);
-        lightEnhanceStrengthValue.setText(String.format("%.2f", enhance.getLightEnhanceStrength()));
-
-        // CLAHE限制
-        int claheProgress = (int) ((enhance.getClaheClipLimit() - 1.0f) * 100);
-        seekBarClaheClipLimit.setProgress(claheProgress);
-        claheClipLimitValue.setText(String.format("%.1f", enhance.getClaheClipLimit()));
-
-        // CLAHE网格大小
-        seekBarClaheTileSize.setProgress(enhance.getClaheTileSize() - 4);
-        claheTileSizeValue.setText(String.valueOf(enhance.getClaheTileSize()));
-
-        // 锐化强度
-        int sharpenProgress = (int) (enhance.getSharpenStrength() * 100);
-        seekBarSharpenStrength.setProgress(sharpenProgress);
-        sharpenStrengthValue.setText(String.format("%.2f", enhance.getSharpenStrength()));
-
-        // 清晰度阈值
-        int sharpnessProgress = (int) (enhance.getSharpnessThreshold() - 50.0);
-        seekBarSharpnessThreshold.setProgress(sharpnessProgress);
-        sharpnessThresholdValue.setText(String.format("%.0f", enhance.getSharpnessThreshold()));
-
-        // 对比度阈值
-        int contrastProgress = (int) ((enhance.getContrastThreshold() - 0.1) * 100);
-        seekBarContrastThreshold.setProgress(contrastProgress);
-        contrastThresholdValue.setText(String.format("%.2f", enhance.getContrastThreshold()));
+        checkBoxEnableEnhance.setChecked(enhance.isEnableEnhance());
     }
 
     private void populateDetectionSettings() {
@@ -488,28 +336,7 @@ public class CameraSettingsDialog extends DialogFragment {
 
     private void applyEnhanceSettings() {
         CameraSettings.EnhanceConfig enhance = currentSettings.getEnhanceConfig();
-
-        // 增强开关
-        enhance.setEnableDetectionEnhance(checkBoxDetectionEnhance.isChecked());
-        enhance.setEnableRecognitionEnhance(checkBoxRecognitionEnhance.isChecked());
-
-        // 轻量增强强度
-        enhance.setLightEnhanceStrength(seekBarLightEnhanceStrength.getProgress() / 100.0f);
-
-        // CLAHE限制
-        enhance.setClaheClipLimit(1.0f + (seekBarClaheClipLimit.getProgress() / 100.0f));
-
-        // CLAHE网格大小
-        enhance.setClaheTileSize(4 + seekBarClaheTileSize.getProgress());
-
-        // 锐化强度
-        enhance.setSharpenStrength(seekBarSharpenStrength.getProgress() / 100.0f);
-
-        // 清晰度阈值
-        enhance.setSharpnessThreshold(50.0 + seekBarSharpnessThreshold.getProgress());
-
-        // 对比度阈值
-        enhance.setContrastThreshold(0.1 + (seekBarContrastThreshold.getProgress() / 100.0));
+        enhance.setEnableEnhance(checkBoxEnableEnhance.isChecked());
     }
 
     private void applyDetectionSettings() {

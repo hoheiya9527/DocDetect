@@ -27,12 +27,12 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-    
+
     packagingOptions {
         pickFirst 'lib/arm64-v8a/libc++_shared.so'
         pickFirst 'lib/armeabi-v7a/libc++_shared.so'
     }
-    
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
@@ -47,8 +47,9 @@ android {
 dependencies {
 
     api fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
-    api project(':PaddleOCR')
-//    implementation project(':KydDecoder')
+//    api project(':PaddleOCR')
+    api project(':OpenCV')
+    implementation project(':KydDecoder')
 
     // CameraX
     implementation libs.camera.core
@@ -56,16 +57,9 @@ dependencies {
     implementation libs.camera.lifecycle
     implementation libs.camera.view
 
-    // TensorFlow Lite
-    implementation libs.tensorflow.lite
-    implementation libs.tensorflow.lite.gpu
-    implementation libs.tensorflow.lite.gpu.api
-    implementation libs.tensorflow.lite.support
-
-    // MLKit
-    implementation libs.mlkit.barcode.scanning
-    // 如果上面的依赖不生效，可以使用下面的直接依赖
-    // implementation 'com.google.mlkit:barcode-scanning:17.3.0'
+    // LiteRT (Google AI Edge)
+    implementation libs.litert
+    implementation libs.litert.support
 
     // AndroidX
     implementation libs.appcompat
@@ -77,4 +71,15 @@ dependencies {
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
+
+    // LitePal ORM
+    implementation libs.litepal
+
+    // ML Kit Text Recognition (Chinese)
+    implementation(libs.mlkit.text.recognition) {
+        exclude group: 'com.google.ai.edge.litert'
+    }
+    implementation(libs.mlkit.text.recognition.chinese) {
+        exclude group: 'com.google.ai.edge.litert'
+    }
 }
