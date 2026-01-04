@@ -22,6 +22,8 @@
     <string name="resolution">分辨率</string>
     <string name="focus_mode">对焦模式</string>
     <string name="exposure_compensation">曝光补偿</string>
+    <string name="auto_exposure">自动曝光 (AE)</string>
+    <string name="shutter_speed">快门速度</string>
     <string name="iso">ISO</string>
     
     <!-- Image Enhancement -->
@@ -122,4 +124,15 @@
     <string name="no_regions_detected">未检测到区域</string>
     <string name="region_detection_failed">区域识别失败</string>
     <string name="content_recognition_desc">进行面单模板匹配识别指定内容</string>
+    
+    <!-- Guide Mode -->
+    <string name="guide_searching">正在搜索目标…</string>
+    <string name="guide_found_move_closer">找到目标，请移近</string>
+    <string name="guide_found_center_it">请将标签移到中央</string>
+    <string name="guide_hold_steady">保持稳定…</string>
+    
+    <!-- Match Mode -->
+    <string name="match_mode">模式:</string>
+    <string name="mode_coarse">全图模板匹配</string>
+    <string name="mode_label_detection">标签检测匹配</string>
 </resources>

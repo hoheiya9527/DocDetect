@@ -45,6 +45,12 @@ public class MatchResult {
     
     /** 错误信息（匹配失败时） */
     private final String errorMessage;
+    
+    /** 模板在输入图像中的四角点位置（用于粗定位引导） */
+    private final PointF[] templateCornersInImage;
+    
+    /** 模板在输入图像中的边界框（用于粗定位引导） */
+    private final RectF templateBoundsInImage;
 
     private MatchResult(Builder builder) {
         this.success = builder.success;
@@ -57,6 +63,8 @@ public class MatchResult {
         this.transformedRegions = builder.transformedRegions;
         this.matchTimeMs = builder.matchTimeMs;
         this.errorMessage = builder.errorMessage;
+        this.templateCornersInImage = builder.templateCornersInImage;
+        this.templateBoundsInImage = builder.templateBoundsInImage;
     }
 
     /**
@@ -119,6 +127,21 @@ public class MatchResult {
 
     public String getErrorMessage() {
         return errorMessage;
+    }
+
+    /**
+     * 获取模板在输入图像中的四角点位置（用于粗定位引导）
+     * 顺序: 左上、右上、右下、左下
+     */
+    public PointF[] getTemplateCornersInImage() {
+        return templateCornersInImage;
+    }
+
+    /**
+     * 获取模板在输入图像中的边界框（用于粗定位引导）
+     */
+    public RectF getTemplateBoundsInImage() {
+        return templateBoundsInImage;
     }
 
     /**
@@ -268,6 +291,8 @@ public class MatchResult {
         private List<TransformedRegion> transformedRegions = new ArrayList<>();
         private long matchTimeMs = 0;
         private String errorMessage;
+        private PointF[] templateCornersInImage;
+        private RectF templateBoundsInImage;
 
         public Builder setSuccess(boolean success) {
             this.success = success;
@@ -316,6 +341,16 @@ public class MatchResult {
 
         public Builder setErrorMessage(String errorMessage) {
             this.errorMessage = errorMessage;
+            return this;
+        }
+
+        public Builder setTemplateCornersInImage(PointF[] corners) {
+            this.templateCornersInImage = corners;
+            return this;
+        }
+
+        public Builder setTemplateBoundsInImage(RectF bounds) {
+            this.templateBoundsInImage = bounds;
             return this;
         }
 

@@ -21,6 +21,8 @@
     <string name="resolution">Resolution</string>
     <string name="focus_mode">Focus Mode</string>
     <string name="exposure_compensation">Exposure Compensation</string>
+    <string name="auto_exposure">Auto Exposure (AE)</string>
+    <string name="shutter_speed">Shutter Speed</string>
     <string name="iso">ISO</string>
     
     <!-- Image Enhancement -->
@@ -121,4 +123,15 @@
     <string name="no_regions_detected">No regions detected</string>
     <string name="region_detection_failed">Region detection failed</string>
     <string name="content_recognition_desc">Template matching to identify specified content.</string>
+    
+    <!-- Guide Mode -->
+    <string name="guide_searching">Searching for target…</string>
+    <string name="guide_found_move_closer">Target found, please move closer</string>
+    <string name="guide_found_center_it">Please center the label</string>
+    <string name="guide_hold_steady">Hold steady…</string>
+    
+    <!-- Match Mode -->
+    <string name="match_mode">Mode:</string>
+    <string name="mode_coarse">Full Detection</string>
+    <string name="mode_label_detection">Label Detection</string>
 </resources>

@@ -96,20 +96,62 @@
 
         </LinearLayout>
 
-        <!-- ISO -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/iso"
-            android:textSize="14sp"
-            android:textColor="?android:attr/textColorSecondary" />
-
-        <Spinner
-            android:id="@+id/spinnerIso"
+        <!-- 自动曝光开关 -->
+        <CheckBox
+            android:id="@+id/checkBoxAutoExposure"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="24dp" />
+            android:layout_height="wrap_content"
+            android:text="@string/auto_exposure"
+            android:textSize="14sp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 快门速度容器 -->
+        <LinearLayout
+            android:id="@+id/layoutShutterSpeed"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/shutter_speed"
+                android:textSize="14sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+            <Spinner
+                android:id="@+id/spinnerShutterSpeed"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="16dp" />
+
+        </LinearLayout>
+
+        <!-- ISO容器 -->
+        <LinearLayout
+            android:id="@+id/layoutIso"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/iso"
+                android:textSize="14sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+            <Spinner
+                android:id="@+id/spinnerIso"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="24dp" />
+
+        </LinearLayout>
 
         <!-- 分隔线 -->
         <View

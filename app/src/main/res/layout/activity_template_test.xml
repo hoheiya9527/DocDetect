@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@android:color/black">
+    android:background="@android:color/black"
+    android:orientation="vertical">
 
     <!-- 上半屏：相机预览 -->
     <FrameLayout
@@ -26,17 +27,17 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:orientation="vertical"
-        android:background="?android:colorBackground">
+        android:background="?android:colorBackground"
+        android:orientation="vertical">
 
         <!-- 匹配状态栏 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
+            android:background="?colorSurface"
             android:gravity="center_vertical"
-            android:padding="12dp"
-            android:background="?colorSurface">
+            android:orientation="horizontal"
+            android:padding="12dp">
 
             <!-- 状态指示器 -->
             <ImageView
@@ -51,12 +52,12 @@
                 android:id="@+id/textViewTemplateName"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
                 android:textAppearance="?android:textAppearanceMedium"
                 android:textStyle="bold"
-                android:maxLines="1"
-                android:ellipsize="end"
                 tools:text="模板名称" />
 
             <!-- 置信度 -->
@@ -70,11 +71,55 @@
 
         </LinearLayout>
 
+        <!-- 匹配模式选择 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?colorSurface"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="4dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/match_mode"
+                android:textColor="?android:textColorSecondary"
+                android:textSize="12sp" />
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/chipGroupMatchMode"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipModeCoarse"
+                    style="@style/Widget.Material3.Chip.Filter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:text="@string/mode_coarse" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipModeLabelDetection"
+                    style="@style/Widget.Material3.Chip.Filter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/mode_label_detection" />
+
+            </com.google.android.material.chip.ChipGroup>
+
+        </LinearLayout>
+
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:background="?android:dividerHorizontal" />
-
         <!-- 区域内容列表 -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/recyclerViewRegions"
@@ -85,16 +130,6 @@
             android:padding="8dp"
             tools:listitem="@layout/item_region_content" />
 
-        <!-- 等待提示（无匹配结果时显示） -->
-        <TextView
-            android:id="@+id/textViewWaiting"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="@string/guidance_preview"
-            android:textColor="?android:textColorSecondary"
-            android:textSize="14sp" />
 
     </LinearLayout>
 

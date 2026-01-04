@@ -19,6 +19,7 @@ public class CameraConfigManager {
     private static final String TAG = "CameraConfigManager";
     private static final String PREFS_NAME = "camera_settings";
     private static final String KEY_CAMERA_CONFIG = "camera_config";
+    private static final String KEY_MATCH_MODE = "match_mode";
     private static final int CONFIG_VERSION = 2;
 
     private final SharedPreferences preferences;
@@ -182,5 +183,23 @@ public class CameraConfigManager {
         settings.setAutoCaptureThreshold(json.optDouble("auto_capture_threshold", 0.998));
         
         return settings;
+    }
+
+    /**
+     * 保存匹配模式
+     * @param mode 模式名称（COARSE 或 LABEL_DETECTION）
+     */
+    public void saveMatchMode(String mode) {
+        preferences.edit().putString(KEY_MATCH_MODE, mode).apply();
+        Log.d(TAG, ">> Match mode saved: " + mode);
+    }
+
+    /**
+     * 加载匹配模式
+     * @param defaultMode 默认模式名称
+     * @return 保存的模式名称，如果没有则返回默认值
+     */
+    public String loadMatchMode(String defaultMode) {
+        return preferences.getString(KEY_MATCH_MODE, defaultMode);
     }
 }

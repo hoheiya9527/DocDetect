@@ -51,6 +51,8 @@ public class CameraSettings {
     private Size analysisResolution; // 分析分辨率
     private FocusMode focusMode;
     private int exposureCompensation;
+    private boolean autoExposure; // 自动曝光开关
+    private long shutterSpeed; // 快门速度（纳秒），0表示自动
     private int iso;
     private float zoomRatio;
     private EnhanceConfig enhanceConfig;
@@ -58,12 +60,34 @@ public class CameraSettings {
     private boolean autoCapture; // 自动捕获开关
     private double autoCaptureThreshold; // 自动捕获置信度阈值
 
+    // 常用快门速度值（纳秒）
+    public static final long[] SHUTTER_SPEED_VALUES = {
+            0L,                  // 自动
+            1000000000L / 8000,  // 1/8000s
+            1000000000L / 4000,  // 1/4000s
+            1000000000L / 2000,  // 1/2000s
+            1000000000L / 1000,  // 1/1000s
+            1000000000L / 500,   // 1/500s
+            1000000000L / 250,   // 1/250s
+            1000000000L / 125,   // 1/125s
+            1000000000L / 60,    // 1/60s
+            1000000000L / 30,    // 1/30s
+            1000000000L / 15     // 1/15s
+    };
+
+    public static final String[] SHUTTER_SPEED_LABELS = {
+            "Auto", "1/8000", "1/4000", "1/2000", "1/1000",
+            "1/500", "1/250", "1/125", "1/60", "1/30", "1/15"
+    };
+
     public CameraSettings() {
         // 默认值
         this.previewResolution = new Size(1280, 720);  // 预览使用720P
         this.analysisResolution = new Size(1920, 1080); // 分析使用1080P
         this.focusMode = FocusMode.CONTINUOUS;
         this.exposureCompensation = 0;
+        this.autoExposure = true; // 默认开启自动曝光
+        this.shutterSpeed = 0; // 0表示自动
         this.iso = 0; // 0表示自动
         this.zoomRatio = 1.0f;
         this.enhanceConfig = new EnhanceConfig();
@@ -118,6 +142,22 @@ public class CameraSettings {
 
     public void setExposureCompensation(int exposureCompensation) {
         this.exposureCompensation = Math.max(-2, Math.min(2, exposureCompensation));
+    }
+
+    public boolean isAutoExposure() {
+        return autoExposure;
+    }
+
+    public void setAutoExposure(boolean autoExposure) {
+        this.autoExposure = autoExposure;
+    }
+
+    public long getShutterSpeed() {
+        return shutterSpeed;
+    }
+
+    public void setShutterSpeed(long shutterSpeed) {
+        this.shutterSpeed = Math.max(0, shutterSpeed);
     }
 
     public int getIso() {
@@ -184,6 +224,8 @@ public class CameraSettings {
         copy.analysisResolution = this.analysisResolution;
         copy.focusMode = this.focusMode;
         copy.exposureCompensation = this.exposureCompensation;
+        copy.autoExposure = this.autoExposure;
+        copy.shutterSpeed = this.shutterSpeed;
         copy.iso = this.iso;
         copy.zoomRatio = this.zoomRatio;
         copy.enhanceConfig = this.enhanceConfig.copy();

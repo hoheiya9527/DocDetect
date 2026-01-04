@@ -377,6 +377,14 @@ public class LabelDetector {
         edges.release();
         hierarchy.release();
 
+        // >> 多标签检测验证日志
+        double totalArea = outputWidth * outputHeight;
+        double minAreaThreshold = totalArea * MIN_QUAD_AREA_RATIO;
+        int totalContours = contours.size();
+        int validQuadCount = 0;
+        int validPolygonCount = 0;
+        List<String> quadInfoList = new ArrayList<>();
+
         MatOfPoint2f biggest = null;
         double maxArea = 0;
 
@@ -387,6 +395,18 @@ public class LabelDetector {
             Imgproc.approxPolyDP(contour2f, approx, 0.02 * peri, true);
 
             double area = Math.abs(Imgproc.contourArea(approx));
+            int vertexCount = (int) approx.total();
+            
+            // >> 统计有效多边形
+            if (area > minAreaThreshold) {
+                validPolygonCount++;
+                if (vertexCount == 4) {
+                    validQuadCount++;
+                    double areaRatio = area / totalArea * 100;
+                    quadInfoList.add(String.format("%.1f%%(%d顶点)", areaRatio, vertexCount));
+                }
+            }
+
             if (area > maxArea) {
                 maxArea = area;
                 if (biggest != null) {
@@ -398,6 +418,15 @@ public class LabelDetector {
             }
             contour2f.release();
             contour.release();
+        }
+
+        // >> 输出多标签检测验证日志
+        Log.d(TAG, ">> [多标签验证] 总轮廓=" + totalContours + 
+                ", 有效多边形=" + validPolygonCount + 
+                ", 有效四边形=" + validQuadCount +
+                ", 最大面积=" + String.format("%.1f%%", maxArea / totalArea * 100));
+        if (!quadInfoList.isEmpty()) {
+            Log.d(TAG, ">> [四边形详情] " + String.join(", ", quadInfoList));
         }
 
         return new BiggestContourResult(biggest, maxArea);

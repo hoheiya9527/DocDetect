@@ -116,7 +116,7 @@ public class CameraPreviewLayout extends FrameLayout {
     }
 
     // ==================== 触摸处理 ====================
-    
+
     // 触摸状态
     private float touchStartX, touchStartY;
     private boolean hasMoved = false;
@@ -396,6 +396,7 @@ public class CameraPreviewLayout extends FrameLayout {
 
     /**
      * 设置内容区域（蓝色框）
+     *
      * @param regions 内容区域列表
      */
     public void setContentRegions(java.util.List<OverlayView.ContentRegion> regions) {

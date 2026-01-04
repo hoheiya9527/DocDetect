@@ -38,14 +38,17 @@ public class TemplateMatcher {
 
     private static final String TAG = "TemplateMatcher";
 
-    /** 最小匹配点数量 */
-    private static final int MIN_MATCH_COUNT = 10;
+    /** 最小匹配点数量（降低以支持远距离匹配） */
+    private static final int MIN_MATCH_COUNT = 6;
     
-    /** Lowe's ratio test 阈值 */
-    private static final float LOWE_RATIO = 0.75f;
+    /** Lowe's ratio test 阈值（放宽以获取更多匹配点） */
+    private static final float LOWE_RATIO = 0.80f;
     
-    /** RANSAC 重投影误差阈值 */
-    private static final double RANSAC_THRESHOLD = 5.0;
+    /** RANSAC 重投影误差阈值（放宽以容忍更多误差） */
+    private static final double RANSAC_THRESHOLD = 8.0;
+    
+    /** 最低置信度阈值（低于此值判定为匹配失败） */
+    private static final float MIN_CONFIDENCE_THRESHOLD = 0.40f;
 
     /** 置信度权重配置 */
     private static final float W_INLIER_RATIO = 0.5f;
@@ -217,7 +220,9 @@ public class TemplateMatcher {
                 }
             }
 
-            Log.d(TAG, "match: goodMatches=" + goodMatches.size() + " / " + knnMatches.size());
+            Log.d(TAG, ">> match: template=" + template.getName() + 
+                    ", goodMatches=" + goodMatches.size() + "/" + knnMatches.size() + 
+                    ", minRequired=" + MIN_MATCH_COUNT);
 
             // 检查匹配点数量
             if (goodMatches.size() < MIN_MATCH_COUNT) {
@@ -270,14 +275,33 @@ public class TemplateMatcher {
             int inlierCount = Core.countNonZero(inlierMask);
             float inlierRatio = (float) inlierCount / goodMatches.size();
 
-            Log.d(TAG, "match: inlierCount=" + inlierCount + ", inlierRatio=" + inlierRatio);
+            Log.d(TAG, ">> match: inlierCount=" + inlierCount + ", inlierRatio=" + String.format("%.2f", inlierRatio));
 
             // 计算综合置信度
             float confidence = calculateConfidence(goodMatches.size(), inlierRatio, avgDistance);
+            
+            // 置信度阈值检查
+            if (confidence < MIN_CONFIDENCE_THRESHOLD) {
+                Log.d(TAG, ">> match: confidence too low: " + String.format("%.2f", confidence) + " < " + MIN_CONFIDENCE_THRESHOLD);
+                return new MatchResult.Builder()
+                        .setSuccess(false)
+                        .setTemplate(template)
+                        .setConfidence(confidence)
+                        .setMatchCount(goodMatches.size())
+                        .setMatchTimeMs(System.currentTimeMillis() - startTime)
+                        .setErrorMessage("Confidence too low: " + String.format("%.2f", confidence))
+                        .build();
+            }
 
             // 变换模板区域坐标
             List<MatchResult.TransformedRegion> transformedRegions = transformRegions(
                     template.getRegions(), homography, imageWidth, imageHeight);
+
+            // 计算模板在输入图像中的位置（用于粗定位引导）
+            PointF[] templateCornersInImage = computeTemplateCornersInImage(
+                    template.getImageWidth(), template.getImageHeight(), 
+                    homography, imageWidth, imageHeight);
+            RectF templateBoundsInImage = computeBoundsFromCorners(templateCornersInImage);
 
             // 构建结果
             long matchTime = System.currentTimeMillis() - startTime;
@@ -291,6 +315,8 @@ public class TemplateMatcher {
                     .setAvgDistance(avgDistance)
                     .setHomography(homography.clone())
                     .setTransformedRegions(transformedRegions)
+                    .setTemplateCornersInImage(templateCornersInImage)
+                    .setTemplateBoundsInImage(templateBoundsInImage)
                     .setMatchTimeMs(matchTime)
                     .build();
 
@@ -456,13 +482,13 @@ public class TemplateMatcher {
             return false;
         }
 
-        // 检查行列式（应接近1，表示无过度缩放）
+        // 检查行列式（粗定位时图像会缩放，所以阈值放宽到 0.01 ~ 100）
         Mat subMat = H.submat(0, 2, 0, 2);
         double det = Core.determinant(subMat);
         subMat.release();
         
-        if (det < 0.1 || det > 10) {
-            Log.w(TAG, "isValidHomography: invalid determinant: " + det);
+        if (det < 0.01 || det > 100) {
+            Log.w(TAG, ">> isValidHomography: invalid determinant: " + det);
             return false;
         }
 
@@ -471,11 +497,12 @@ public class TemplateMatcher {
         H.get(0, 0, data);
         for (double d : data) {
             if (Double.isNaN(d) || Double.isInfinite(d)) {
-                Log.w(TAG, "isValidHomography: contains NaN or Inf");
+                Log.w(TAG, ">> isValidHomography: contains NaN or Inf");
                 return false;
             }
         }
 
+        Log.d(TAG, ">> isValidHomography: det=" + String.format("%.2f", det) + ", valid");
         return true;
     }
 
@@ -547,6 +574,73 @@ public class TemplateMatcher {
         }
 
         return result;
+    }
+
+    /**
+     * 计算模板在输入图像中的四角点位置
+     * 用于粗定位引导，显示模板在原图中的位置
+     */
+    private PointF[] computeTemplateCornersInImage(int templateWidth, int templateHeight,
+            Mat homography, int imageWidth, int imageHeight) {
+        if (homography == null || homography.empty() || templateWidth <= 0 || templateHeight <= 0) {
+            return null;
+        }
+
+        Mat invHomography = null;
+        try {
+            // 模板四角（模板坐标系）
+            MatOfPoint2f templateCorners = new MatOfPoint2f(
+                    new Point(0, 0),
+                    new Point(templateWidth, 0),
+                    new Point(templateWidth, templateHeight),
+                    new Point(0, templateHeight)
+            );
+
+            // 逆变换到输入图像坐标系
+            invHomography = homography.inv();
+            MatOfPoint2f imageCorners = new MatOfPoint2f();
+            Core.perspectiveTransform(templateCorners, imageCorners, invHomography);
+
+            Point[] points = imageCorners.toArray();
+            templateCorners.release();
+            imageCorners.release();
+
+            // 转换为 PointF（不限制边界，允许超出图像范围以便显示引导）
+            PointF[] result = new PointF[4];
+            for (int i = 0; i < 4; i++) {
+                result[i] = new PointF((float) points[i].x, (float) points[i].y);
+            }
+            Log.d(TAG, ">> computeTemplateCornersInImage: corners[0]=(" + 
+                    String.format("%.1f,%.1f", result[0].x, result[0].y) + ")");
+            return result;
+
+        } catch (Exception e) {
+            Log.e(TAG, "computeTemplateCornersInImage failed", e);
+            return null;
+        } finally {
+            if (invHomography != null) invHomography.release();
+        }
+    }
+
+    /**
+     * 从四角点计算边界框
+     */
+    private RectF computeBoundsFromCorners(PointF[] corners) {
+        if (corners == null || corners.length != 4) {
+            return null;
+        }
+
+        float minX = Float.MAX_VALUE, maxX = Float.MIN_VALUE;
+        float minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
+
+        for (PointF corner : corners) {
+            minX = Math.min(minX, corner.x);
+            maxX = Math.max(maxX, corner.x);
+            minY = Math.min(minY, corner.y);
+            maxY = Math.max(maxY, corner.y);
+        }
+
+        return new RectF(minX, minY, maxX, maxY);
     }
 
     /**

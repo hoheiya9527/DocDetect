@@ -47,7 +47,6 @@ public class OverlayView extends View {
     private Paint detectionBoxPaint;
     private Paint contentBorderPaint;
     private Paint contentFillPaint;
-    //    private Paint cornerPaint;
     private Paint textPaint;
 
     // 检测框数据（使用 synchronized 保护）
@@ -131,11 +130,6 @@ public class OverlayView extends View {
         contentFillPaint.setColor(COLOR_CONTENT_SELECTED);
         contentFillPaint.setStyle(Paint.Style.FILL);
 
-//        // 角点画笔
-//        cornerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-//        cornerPaint.setColor(COLOR_CORNER_POINT);
-//        cornerPaint.setStyle(Paint.Style.FILL);
-
         // 文字画笔
         textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         textPaint.setColor(Color.WHITE);
@@ -166,6 +160,7 @@ public class OverlayView extends View {
 
     /**
      * 设置 FILL_CENTER 模式的坐标转换参数
+     * 注意：此方法不单独触发重绘，由后续的 setDetectionBox/setContentRegions 触发
      *
      * @param modelWidth  模型输出宽度
      * @param modelHeight 模型输出高度
@@ -184,7 +179,7 @@ public class OverlayView extends View {
             this.offsetY = -cropOffsetY;
             this.useCustomCoordinates = true;
         }
-        throttledInvalidate();
+        // 不单独触发重绘，坐标系统和绘制数据应同步更新后再重绘
     }
 
     /**
@@ -282,7 +277,7 @@ public class OverlayView extends View {
         throttledInvalidate();
     }
 
-
+    /**
     /**
      * 清除所有绘制
      */
@@ -323,6 +318,7 @@ public class OverlayView extends View {
             localOffsetY = offsetY;
             localContentRegions = new ArrayList<>(contentRegions);
         }
+
         // 绘制检测框
         drawDetectionBox(canvas, localDetectionBox, localDetectionCorners, localDetectionAlpha, localScaleX, localScaleY, localOffsetX, localOffsetY);
         // 绘制内容区域
