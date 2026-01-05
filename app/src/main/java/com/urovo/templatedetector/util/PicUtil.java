@@ -6,6 +6,9 @@ import android.media.Image;
 import android.util.Log;
 
 import java.nio.ByteBuffer;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.util.concurrent.Executors;
 
 /**
@@ -19,6 +22,7 @@ import java.util.concurrent.Executors;
 public class PicUtil {
 
     private static final String TAG = PicUtil.class.getSimpleName();
+    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US);
 
     /**
      * 异步保存YUV数据（不阻塞解码流程）
@@ -48,6 +52,38 @@ public class PicUtil {
                 Log.e(TAG, "Failed to save YUV data", e);
             }
         });
+    }
+
+    public static void saveYuvToJpegAsync(Context context, byte[] yuvData, int width, int height, String prefix) {
+        if (context == null || yuvData == null || width <= 0 || height <= 0) {
+            Log.w(TAG, "Invalid parameters for saveYuvToJpegAsync");
+            return;
+        }
+        // 使用独立线程保存，避免阻塞解码
+        Executors.newSingleThreadExecutor().execute(() -> {
+            try {
+                String timestamp = DATE_FORMAT.format(new Date());
+                String baseName = (prefix != null ? prefix + "_" : "") + timestamp + "_" + width + "x" + height;
+                FileManager.saveJpegFromYuv(context, yuvData, width, height, baseName);
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to save YUV data", e);
+            }
+        });
+    }
+
+    public static void saveYuvToJpegAsync(Context context, Bitmap bitmap, String prefix) {
+        if (context == null || bitmap == null) {
+            Log.w(TAG, "Invalid parameters for saveYuvToJpegAsync");
+            return;
+        }
+        // 使用独立线程保存，避免阻塞解码
+        try {
+            String timestamp = DATE_FORMAT.format(new Date());
+            String baseName = (prefix != null ? prefix + "_" : "") + timestamp + "_" + bitmap.getWidth() + "x" + bitmap.getHeight();
+            FileManager.saveJpegFromYuv(context, bitmap, baseName);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to save YUV data", e);
+        }
     }
 
     /**
@@ -175,7 +211,8 @@ public class PicUtil {
     }
 
     /**
-     * 将Bitmap转换为NV21格式
+     * 将Bitmap转换为NV21格式 - 完全重写版本
+     * 解决图像扭曲问题：使用标准算法，无对齐处理
      *
      * @param bitmap 源Bitmap
      * @return NV21格式的YUV数据
@@ -183,64 +220,93 @@ public class PicUtil {
     private static byte[] bitmapToNV21(Bitmap bitmap) {
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
-        
-        // YUV420 要求宽高为偶数，如果是奇数则向上取整
-        int alignedWidth = (width + 1) & ~1;
-        int alignedHeight = (height + 1) & ~1;
-        
-        int[] argb = new int[width * height];
-        bitmap.getPixels(argb, 0, width, 0, 0, width, height);
 
-        // 使用对齐后的尺寸计算缓冲区大小
-        byte[] yuv = new byte[alignedWidth * alignedHeight * 3 / 2];
-        encodeYUV420SP(yuv, argb, width, height, alignedWidth, alignedHeight);
+        // 确保bitmap配置正确
+        if (bitmap.getConfig() == null) {
+            Log.w(TAG, ">>Bitmap config is null, may cause conversion issues");
+        }
+
+        // 不进行对齐处理，保持原始尺寸
+        int[] argb = new int[width * height];
+        try {
+            bitmap.getPixels(argb, 0, width, 0, 0, width, height);
+        } catch (Exception e) {
+            Log.e(TAG, ">>Failed to get pixels from bitmap", e);
+            throw new RuntimeException("Failed to extract pixels from bitmap", e);
+        }
+
+        // NV21格式：Y平面 + 交错VU平面
+        byte[] yuv = new byte[width * height * 3 / 2];
+        encodeYUV420SP_Fixed(yuv, argb, width, height);
+        
+        Log.d(TAG, ">>Bitmap to YUV conversion: " + width + "x" + height + 
+                ", YUV size: " + yuv.length);
+        
         return yuv;
     }
 
     /**
-     * RGB转YUV420SP(NV21)
-     * 使用ITU-R BT.601标准转换公式
+     * RGB转YUV420SP(NV21) - 标准实现，修正扭曲问题
+     * 使用最简单直接的转换算法，不进行复杂的采样处理
      *
-     * @param yuv420sp      输出缓冲区
-     * @param argb          输入ARGB像素数组
-     * @param width         实际图像宽度
-     * @param height        实际图像高度
-     * @param alignedWidth  对齐后的宽度（偶数）
-     * @param alignedHeight 对齐后的高度（偶数）
+     * @param yuv420sp 输出缓冲区
+     * @param argb     输入ARGB像素数组
+     * @param width    图像宽度
+     * @param height   图像高度
      */
-    private static void encodeYUV420SP(byte[] yuv420sp, int[] argb, int width, int height, 
-                                        int alignedWidth, int alignedHeight) {
-        final int frameSize = alignedWidth * alignedHeight;
-
+    private static void encodeYUV420SP_Fixed(byte[] yuv420sp, int[] argb, int width, int height) {
+        final int frameSize = width * height;
+        
         int yIndex = 0;
         int uvIndex = frameSize;
 
-        for (int j = 0; j < alignedHeight; j++) {
-            for (int i = 0; i < alignedWidth; i++) {
-                int R, G, B;
+        // 处理Y分量 - 每个像素一个Y值
+        for (int j = 0; j < height; j++) {
+            for (int i = 0; i < width; i++) {
+                int pixelIndex = j * width + i;
+                int pixel = argb[pixelIndex];
                 
-                // 如果超出实际图像范围，使用边缘像素
-                int srcX = Math.min(i, width - 1);
-                int srcY = Math.min(j, height - 1);
-                int index = srcY * width + srcX;
-                
-                R = (argb[index] & 0xff0000) >> 16;
-                G = (argb[index] & 0xff00) >> 8;
-                B = (argb[index] & 0xff);
+                int R = (pixel & 0xff0000) >> 16;
+                int G = (pixel & 0xff00) >> 8;
+                int B = (pixel & 0xff);
 
-                // ITU-R BT.601转换公式
+                // 标准ITU-R BT.601转换公式
                 int Y = ((66 * R + 129 * G + 25 * B + 128) >> 8) + 16;
-                int U = ((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128;
-                int V = ((112 * R - 94 * G - 18 * B + 128) >> 8) + 128;
+                Y = Math.max(16, Math.min(235, Y));
+                
+                yuv420sp[yIndex++] = (byte) Y;
+            }
+        }
 
-                yuv420sp[yIndex++] = (byte) Math.max(0, Math.min(255, Y));
+        // 处理UV分量 - 每2x2像素块一对VU值
+        for (int j = 0; j < height; j += 2) {
+            for (int i = 0; i < width; i += 2) {
+                // 取2x2块的左上角像素进行UV转换
+                int pixelIndex = j * width + i;
+                if (pixelIndex < argb.length) {
+                    int pixel = argb[pixelIndex];
+                    
+                    int R = (pixel & 0xff0000) >> 16;
+                    int G = (pixel & 0xff00) >> 8;
+                    int B = (pixel & 0xff);
 
-                // UV采样：每2x2的Y对应一个UV
-                if (j % 2 == 0 && i % 2 == 0) {
-                    yuv420sp[uvIndex++] = (byte) Math.max(0, Math.min(255, V));
-                    yuv420sp[uvIndex++] = (byte) Math.max(0, Math.min(255, U));
+                    // 计算UV分量
+                    int U = ((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128;
+                    int V = ((112 * R - 94 * G - 18 * B + 128) >> 8) + 128;
+                    
+                    U = Math.max(16, Math.min(240, U));
+                    V = Math.max(16, Math.min(240, V));
+                    
+                    // NV21格式：V在前，U在后
+                    if (uvIndex + 1 < yuv420sp.length) {
+                        yuv420sp[uvIndex++] = (byte) V;
+                        yuv420sp[uvIndex++] = (byte) U;
+                    }
                 }
             }
         }
+        
+        Log.d(TAG, ">>YUV encoding completed: Y=" + frameSize + " bytes, UV=" + 
+                (yuv420sp.length - frameSize) + " bytes");
     }
 }

@@ -61,17 +61,17 @@ public class MLKitOCREngine implements OCREngine {
     public List<OCRResult> recognize(Bitmap bitmap) {
         List<OCRResult> results = new ArrayList<>();
 
-        if (!initialized || bitmap == null || bitmap.isRecycled()) {
-            return results;
-        }
-
-        try {
-            InputImage inputImage = InputImage.fromBitmap(bitmap, 0);
-            Text text = Tasks.await(textRecognizer.process(inputImage));
-            results = parseTextResult(text);
-        } catch (Exception e) {
-            Log.e(TAG, "OCR recognition failed", e);
-        }
+//        if (!initialized || bitmap == null || bitmap.isRecycled()) {
+//            return results;
+//        }
+//
+//        try {
+//            InputImage inputImage = InputImage.fromBitmap(bitmap, 0);
+//            Text text = Tasks.await(textRecognizer.process(inputImage));
+//            results = parseTextResult(text);
+//        } catch (Exception e) {
+//            Log.e(TAG, "OCR recognition failed", e);
+//        }
 
         return results;
     }

@@ -90,15 +90,16 @@ public class KydBarcodeDecoder implements BarcodeDecoder {
         }
         executor.execute(() -> {
             try {
-                byte[] yuvData = PicUtil.bitmapToYUV(bitmap);
-                if (yuvData == null) {
-                    callback.onFailure(new RuntimeException("Failed to convert bitmap to YUV"));
-                    return;
+                // 调试模式：保存初始bitmap
+                if (saveDebugFile) {
+                    PicUtil.saveYuvToJpegAsync(context, bitmap, "bitmap_ori");
                 }
+                byte[] yuvData = PicUtil.bitmapToYUV(bitmap);
 
                 // 调试模式：保存YUV数据
                 if (saveDebugFile) {
-                    PicUtil.saveYuvDataAsync(context, yuvData, bitmap.getWidth(), bitmap.getHeight(), "bitmap_decode");
+//                    PicUtil.saveYuvDataAsync(context, yuvData, bitmap.getWidth(), bitmap.getHeight(), "bitmap_decode");
+                    PicUtil.saveYuvToJpegAsync(context, yuvData, bitmap.getWidth(), bitmap.getHeight(), "bitmap_decode");
                 }
 
                 List<BarcodeResult> results = decodeYuvData(yuvData, bitmap.getWidth(), bitmap.getHeight(), rotationDegrees);

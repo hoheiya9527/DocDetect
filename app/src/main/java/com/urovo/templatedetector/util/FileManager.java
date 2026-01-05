@@ -4,6 +4,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -162,10 +163,64 @@ public class FileManager {
     }
 
     /**
+     * 保存Bitmap为JPEG图像到Download/Scan目录
+     *
+     * @param context  上下文
+     * @param bitmap   要保存的Bitmap对象
+     * @param fileName 文件名
+     * @return 是否保存成功
+     */
+    public static boolean saveJpegFromYuv(@NonNull Context context, @NonNull Bitmap bitmap, @NonNull String fileName) {
+        if (bitmap == null || bitmap.isRecycled()) {
+            Log.e(TAG, ">>Invalid bitmap for JPEG save: " + fileName);
+            return false;
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentResolver resolver = context.getContentResolver();
+                ContentValues values = createContentValues(fileName, "image/jpeg");
+                Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+
+                if (uri == null) {
+                    Log.e(TAG, ">>Failed to create MediaStore entry for JPEG: " + fileName);
+                    return false;
+                }
+
+                try (OutputStream os = resolver.openOutputStream(uri)) {
+                    if (os == null) {
+                        Log.e(TAG, ">>Failed to open output stream for JPEG: " + fileName);
+                        return false;
+                    }
+                    boolean success = bitmap.compress(Bitmap.CompressFormat.JPEG, 90, os);
+                    if (success) {
+                        Log.d(TAG, ">>Successfully saved JPEG: " + fileName + 
+                                ", size: " + bitmap.getWidth() + "x" + bitmap.getHeight());
+                    }
+                    return success;
+                }
+            } else {
+                File file = getLegacyFile(fileName);
+                try (FileOutputStream fos = new FileOutputStream(file)) {
+                    boolean success = bitmap.compress(Bitmap.CompressFormat.JPEG, 90, fos);
+                    if (success) {
+                        Log.d(TAG, ">>Successfully saved JPEG (legacy): " + fileName + 
+                                ", size: " + bitmap.getWidth() + "x" + bitmap.getHeight());
+                    }
+                    return success;
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, ">>Failed to save JPEG: " + fileName, e);
+            return false;
+        }
+    }
+
+    /**
      * 将YUV转换为JPEG并保存
      */
-    private static boolean saveJpegFromYuv(@NonNull Context context, @NonNull byte[] yuvData,
-                                           int width, int height, @NonNull String fileName) {
+    public static boolean saveJpegFromYuv(@NonNull Context context, @NonNull byte[] yuvData,
+                                          int width, int height, @NonNull String fileName) {
         try {
             // 使用YuvImage进行高效转换
             YuvImage yuvImage = new YuvImage(yuvData, ImageFormat.NV21, width, height, null);

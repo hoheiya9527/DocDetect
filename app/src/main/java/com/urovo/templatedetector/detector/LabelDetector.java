@@ -9,6 +9,7 @@ import android.util.Log;
 import androidx.camera.core.ImageProxy;
 
 import com.urovo.templatedetector.model.DetectionResult;
+import com.urovo.templatedetector.util.PerformanceTracker;
 
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -20,7 +21,6 @@ import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
-
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
 import org.tensorflow.lite.support.common.FileUtil;
@@ -29,8 +29,6 @@ import org.tensorflow.lite.support.image.ImageProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.image.ops.ResizeOp;
 import org.tensorflow.lite.support.image.ops.Rot90Op;
-
-import com.urovo.templatedetector.util.PerformanceTracker;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -379,12 +377,6 @@ public class LabelDetector {
 
         // >> 多标签检测验证日志
         double totalArea = outputWidth * outputHeight;
-        double minAreaThreshold = totalArea * MIN_QUAD_AREA_RATIO;
-        int totalContours = contours.size();
-        int validQuadCount = 0;
-        int validPolygonCount = 0;
-        List<String> quadInfoList = new ArrayList<>();
-
         MatOfPoint2f biggest = null;
         double maxArea = 0;
 
@@ -395,17 +387,6 @@ public class LabelDetector {
             Imgproc.approxPolyDP(contour2f, approx, 0.02 * peri, true);
 
             double area = Math.abs(Imgproc.contourArea(approx));
-            int vertexCount = (int) approx.total();
-            
-            // >> 统计有效多边形
-            if (area > minAreaThreshold) {
-                validPolygonCount++;
-                if (vertexCount == 4) {
-                    validQuadCount++;
-                    double areaRatio = area / totalArea * 100;
-                    quadInfoList.add(String.format("%.1f%%(%d顶点)", areaRatio, vertexCount));
-                }
-            }
 
             if (area > maxArea) {
                 maxArea = area;
@@ -418,15 +399,6 @@ public class LabelDetector {
             }
             contour2f.release();
             contour.release();
-        }
-
-        // >> 输出多标签检测验证日志
-        Log.d(TAG, ">> [多标签验证] 总轮廓=" + totalContours + 
-                ", 有效多边形=" + validPolygonCount + 
-                ", 有效四边形=" + validQuadCount +
-                ", 最大面积=" + String.format("%.1f%%", maxArea / totalArea * 100));
-        if (!quadInfoList.isEmpty()) {
-            Log.d(TAG, ">> [四边形详情] " + String.join(", ", quadInfoList));
         }
 
         return new BiggestContourResult(biggest, maxArea);
@@ -1038,13 +1010,21 @@ public class LabelDetector {
      * 校正结果（包含变换矩阵）
      */
     public static class CorrectionResult {
-        /** 校正后的图像 */
+        /**
+         * 校正后的图像
+         */
         public final Mat correctedMat;
-        /** 透视变换矩阵（从原图到校正图） */
+        /**
+         * 透视变换矩阵（从原图到校正图）
+         */
         public final Mat perspectiveMatrix;
-        /** 校正后图像的宽度 */
+        /**
+         * 校正后图像的宽度
+         */
         public final int width;
-        /** 校正后图像的高度 */
+        /**
+         * 校正后图像的高度
+         */
         public final int height;
 
         public CorrectionResult(Mat correctedMat, Mat perspectiveMatrix, int width, int height) {
