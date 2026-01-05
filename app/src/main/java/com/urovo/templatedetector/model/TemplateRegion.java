@@ -12,7 +12,7 @@ import org.litepal.crud.LitePalSupport;
 public class TemplateRegion extends LitePalSupport {
 
     /** 条码区域扩展比例（每边扩展 15%） */
-    public static final float EXPAND_RATIO_BARCODE = 0.15f;
+    public static final float EXPAND_RATIO_BARCODE = 0.1f;
     
     /** 文字区域扩展比例（每边扩展 10%） */
     public static final float EXPAND_RATIO_TEXT = 0.10f;

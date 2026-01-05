@@ -212,6 +212,17 @@ public class TemplateMatchingService {
      * @return 匹配结果
      */
     public MatchResult matchTemplateFromMat(Mat inputMat, long templateId) {
+        return matchTemplateFromMat(inputMat, templateId, false);
+    }
+
+    /**
+     * 从 Mat 匹配指定模板（支持标签检测模式）
+     * @param inputMat 输入图像 Mat
+     * @param templateId 模板ID
+     * @param isLabelDetectionMode 是否为标签检测模式
+     * @return 匹配结果
+     */
+    public MatchResult matchTemplateFromMat(Mat inputMat, long templateId, boolean isLabelDetectionMode) {
         if (!initialized) {
             return MatchResult.failure("Service not initialized");
         }
@@ -221,7 +232,7 @@ public class TemplateMatchingService {
             return MatchResult.failure("Template not found: " + templateId);
         }
 
-        MatchResult result = matcher.matchFromMat(inputMat, template);
+        MatchResult result = matcher.matchFromMat(inputMat, template, isLabelDetectionMode);
         
         if (result.isSuccess()) {
             repository.incrementTemplateUsage(templateId);
@@ -299,6 +310,16 @@ public class TemplateMatchingService {
      * @return 最佳匹配结果
      */
     public MatchResult matchAllFromMat(Mat inputMat) {
+        return matchAllFromMat(inputMat, false);
+    }
+
+    /**
+     * 从 Mat 在所有模板中匹配最佳模板（支持标签检测模式）
+     * @param inputMat 输入图像 Mat
+     * @param isLabelDetectionMode 是否为标签检测模式
+     * @return 最佳匹配结果
+     */
+    public MatchResult matchAllFromMat(Mat inputMat, boolean isLabelDetectionMode) {
         if (!initialized) {
             return MatchResult.failure("Service not initialized");
         }
@@ -314,7 +335,7 @@ public class TemplateMatchingService {
             template.setRegions(regions);
         }
 
-        MatchResult result = matcher.matchBestFromMat(inputMat, templates);
+        MatchResult result = matcher.matchBestFromMat(inputMat, templates, isLabelDetectionMode);
         
         if (result.isSuccess() && result.getTemplate() != null) {
             repository.incrementTemplateUsage(result.getTemplate().getId());

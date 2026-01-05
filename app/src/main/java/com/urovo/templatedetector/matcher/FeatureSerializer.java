@@ -1,6 +1,6 @@
 package com.urovo.templatedetector.matcher;
 
-import android.util.Log;
+import com.urovo.templatedetector.utils.MLog;
 
 import org.opencv.core.CvType;
 import org.opencv.core.KeyPoint;
@@ -43,7 +43,7 @@ public class FeatureSerializer {
      */
     public static boolean saveDescriptors(Mat descriptors, String filePath) {
         if (descriptors == null || descriptors.empty()) {
-            Log.e(TAG, "saveDescriptors: invalid descriptors");
+            MLog.e(TAG, "saveDescriptors: invalid descriptors");
             return false;
         }
 
@@ -70,11 +70,11 @@ public class FeatureSerializer {
             descriptors.get(0, 0, data);
             dos.write(data);
             
-            Log.d(TAG, "saveDescriptors: saved " + rows + "x" + cols + " type=" + type + " to " + filePath);
+            MLog.d(TAG, "saveDescriptors: saved " + rows + "x" + cols + " type=" + type + " to " + filePath);
             return true;
             
         } catch (IOException e) {
-            Log.e(TAG, "saveDescriptors failed", e);
+            MLog.e(TAG, "saveDescriptors failed", e);
             return false;
         }
     }
@@ -87,7 +87,7 @@ public class FeatureSerializer {
     public static Mat loadDescriptors(String filePath) {
         File file = new File(filePath);
         if (!file.exists()) {
-            Log.e(TAG, "loadDescriptors: file not found: " + filePath);
+            MLog.e(TAG, "loadDescriptors: file not found: " + filePath);
             return null;
         }
 
@@ -95,13 +95,13 @@ public class FeatureSerializer {
             // 验证魔数和版本
             int magic = dis.readInt();
             if (magic != MAGIC_DESCRIPTORS) {
-                Log.e(TAG, "loadDescriptors: invalid magic number");
+                MLog.e(TAG, "loadDescriptors: invalid magic number");
                 return null;
             }
             
             int version = dis.readInt();
             if (version > VERSION) {
-                Log.e(TAG, "loadDescriptors: unsupported version: " + version);
+                MLog.e(TAG, "loadDescriptors: unsupported version: " + version);
                 return null;
             }
             
@@ -121,11 +121,11 @@ public class FeatureSerializer {
             dis.readFully(data);
             descriptors.put(0, 0, data);
             
-            Log.d(TAG, "loadDescriptors: loaded " + rows + "x" + cols + " type=" + type + " from " + filePath);
+            MLog.d(TAG, "loadDescriptors: loaded " + rows + "x" + cols + " type=" + type + " from " + filePath);
             return descriptors;
             
         } catch (IOException e) {
-            Log.e(TAG, "loadDescriptors failed", e);
+            MLog.e(TAG, "loadDescriptors failed", e);
             return null;
         }
     }
@@ -138,7 +138,7 @@ public class FeatureSerializer {
      */
     public static boolean saveKeypoints(MatOfKeyPoint keypoints, String filePath) {
         if (keypoints == null || keypoints.empty()) {
-            Log.e(TAG, "saveKeypoints: invalid keypoints");
+            MLog.e(TAG, "saveKeypoints: invalid keypoints");
             return false;
         }
 
@@ -164,11 +164,11 @@ public class FeatureSerializer {
                 dos.writeInt(kp.class_id);
             }
             
-            Log.d(TAG, "saveKeypoints: saved " + kpArray.length + " keypoints to " + filePath);
+            MLog.d(TAG, "saveKeypoints: saved " + kpArray.length + " keypoints to " + filePath);
             return true;
             
         } catch (IOException e) {
-            Log.e(TAG, "saveKeypoints failed", e);
+            MLog.e(TAG, "saveKeypoints failed", e);
             return false;
         }
     }
@@ -181,7 +181,7 @@ public class FeatureSerializer {
     public static MatOfKeyPoint loadKeypoints(String filePath) {
         File file = new File(filePath);
         if (!file.exists()) {
-            Log.e(TAG, "loadKeypoints: file not found: " + filePath);
+            MLog.e(TAG, "loadKeypoints: file not found: " + filePath);
             return null;
         }
 
@@ -189,13 +189,13 @@ public class FeatureSerializer {
             // 验证魔数和版本
             int magic = dis.readInt();
             if (magic != MAGIC_KEYPOINTS) {
-                Log.e(TAG, "loadKeypoints: invalid magic number");
+                MLog.e(TAG, "loadKeypoints: invalid magic number");
                 return null;
             }
             
             int version = dis.readInt();
             if (version > VERSION) {
-                Log.e(TAG, "loadKeypoints: unsupported version: " + version);
+                MLog.e(TAG, "loadKeypoints: unsupported version: " + version);
                 return null;
             }
             
@@ -219,11 +219,11 @@ public class FeatureSerializer {
             MatOfKeyPoint keypoints = new MatOfKeyPoint();
             keypoints.fromList(kpList);
             
-            Log.d(TAG, "loadKeypoints: loaded " + count + " keypoints from " + filePath);
+            MLog.d(TAG, "loadKeypoints: loaded " + count + " keypoints from " + filePath);
             return keypoints;
             
         } catch (IOException e) {
-            Log.e(TAG, "loadKeypoints failed", e);
+            MLog.e(TAG, "loadKeypoints failed", e);
             return null;
         }
     }

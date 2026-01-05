@@ -40,6 +40,7 @@ import com.urovo.templatedetector.model.MatchResult;
 import com.urovo.templatedetector.model.Template;
 import com.urovo.templatedetector.util.CameraConfigManager;
 import com.urovo.templatedetector.util.ImageEnhancer;
+import com.urovo.templatedetector.utils.MLog;
 import com.urovo.templatedetector.view.CameraPreviewLayout;
 import com.urovo.templatedetector.view.CameraSettingsDialog;
 import com.urovo.templatedetector.view.OverlayView;
@@ -273,22 +274,34 @@ public class TemplateTestActivity extends AppCompatActivity {
     private void switchMatchMode(MatchMode mode) {
         if (currentMatchMode == mode) return;
 
-        Log.d(TAG, ">> Switch match mode: " + currentMatchMode + " -> " + mode);
         currentMatchMode = mode;
         
         // 持久化保存
         CameraConfigManager.getInstance(this).saveMatchMode(mode.name());
 
-        // 重置状态
+        // 关键修正：完全重置状态，避免模式间的状态污染
         stableFrameCounter = 0;
         lostFrameCounter = 0;
         isMatching = false;
         lastDetectionResult = null;
 
+        // 完全清理之前的匹配结果和相关状态
         releaseMatchResult();
+        
         runOnUiThread(() -> {
             cameraPreviewLayout.hideDetectionBox();
             cameraPreviewLayout.clearContentRegions();
+            
+            // 关键修正：根据模式正确设置坐标系
+            if (lastRotatedWidth > 0 && lastRotatedHeight > 0) {
+                if (mode == MatchMode.COARSE) {
+                    // 全图模式：使用原图坐标系
+                    cameraPreviewLayout.setFillCenterCoordinates(lastRotatedWidth, lastRotatedHeight, lastRotatedWidth, lastRotatedHeight);
+                } else {
+                    // 标签检测模式：坐标系会在检测时动态设置，这里先清理
+                }
+            }
+            
             showNoMatchState();
         });
     }
@@ -526,6 +539,8 @@ public class TemplateTestActivity extends AppCompatActivity {
 
             if (result == null || result.correctedMat == null) return null;
 
+            // 注意：result.perspectiveMatrix 是从原图到校正图的变换矩阵
+            // 我们需要的是从校正图到原图的逆变换矩阵
             Mat inverse = result.perspectiveMatrix.inv();
             Mat corrected = result.correctedMat.clone();
 
@@ -677,26 +692,37 @@ public class TemplateTestActivity extends AppCompatActivity {
 
     /**
      * 更新预览中的内容区域蓝框
+     * 关键修正：标签检测模式下，需要考虑坐标系的正确映射
      */
     private void updateContentRegionsOverlay(List<MatchResult.TransformedRegion> regions) {
-        if (regions == null || regions.isEmpty() || inverseMatrix == null) {
-            Log.d(TAG, ">> updateContentRegionsOverlay inverseMatrix = null");
+        if (regions == null || regions.isEmpty()) {
             cameraPreviewLayout.clearContentRegions();
             return;
         }
 
-        DetectionResult detection = lastDetectionResult;
-        if (detection == null && currentMatchMode == MatchMode.LABEL_DETECTION) {
-            Log.d(TAG, ">> updateContentRegionsOverlay detection = null");
-            cameraPreviewLayout.clearContentRegions();
-            return;
+        // 获取当前状态快照，防止多线程竞态条件
+        final Mat currentInverseMatrix = inverseMatrix;
+        final DetectionResult currentDetection = lastDetectionResult;
+        final MatchMode currentMode = currentMatchMode;
+
+        // 根据模式检查必要条件
+        if (currentMode == MatchMode.LABEL_DETECTION) {
+            if (currentDetection == null || currentInverseMatrix == null) {
+                cameraPreviewLayout.clearContentRegions();
+                return;
+            }
+        } else {
+            if (currentInverseMatrix == null) {
+                cameraPreviewLayout.clearContentRegions();
+                return;
+            }
         }
 
         // 计算坐标缩放比例
         int modelWidth, modelHeight;
-        if (detection != null) {
-            modelWidth = detection.getModelWidth();
-            modelHeight = detection.getModelHeight();
+        if (currentDetection != null) {
+            modelWidth = currentDetection.getModelWidth();
+            modelHeight = currentDetection.getModelHeight();
         } else {
             modelWidth = lastRotatedWidth;
             modelHeight = lastRotatedHeight;
@@ -710,7 +736,7 @@ public class TemplateTestActivity extends AppCompatActivity {
             PointF[] corners = region.getTransformedCorners();
             if (corners == null || corners.length != 4) continue;
 
-            PointF[] imageCorners = transformPointsWithMatrix(corners, inverseMatrix);
+            PointF[] imageCorners = transformPointsWithMatrix(corners, currentInverseMatrix);
             if (imageCorners == null) continue;
 
             PointF[] modelCorners = new PointF[4];
@@ -766,7 +792,9 @@ public class TemplateTestActivity extends AppCompatActivity {
     }
 
     private PointF[] transformPointsWithMatrix(PointF[] points, Mat matrix) {
-        if (points == null || matrix == null || matrix.empty()) return null;
+        if (points == null || matrix == null || matrix.empty()) {
+            return null;
+        }
 
         try {
             MatOfPoint2f srcPoints = new MatOfPoint2f();
@@ -787,10 +815,25 @@ public class TemplateTestActivity extends AppCompatActivity {
 
             srcPoints.release();
             dstPoints.release();
+            
+            // 调试：验证变换结果的合理性
+            boolean hasInvalidCoords = false;
+            for (PointF p : result) {
+                if (Float.isNaN(p.x) || Float.isNaN(p.y) || Float.isInfinite(p.x) || Float.isInfinite(p.y)) {
+                    hasInvalidCoords = true;
+                    break;
+                }
+            }
+            
+            if (hasInvalidCoords) {
+                MLog.w(TAG, ">> transformPointsWithMatrix: produced invalid coordinates");
+                return null;
+            }
+            
             return result;
 
         } catch (Exception e) {
-            Log.e(TAG, ">> transformPointsWithMatrix failed", e);
+            MLog.e(TAG, ">> transformPointsWithMatrix failed", e);
             return null;
         }
     }
