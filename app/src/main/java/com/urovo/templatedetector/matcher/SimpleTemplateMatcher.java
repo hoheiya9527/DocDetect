@@ -24,7 +24,11 @@ import org.opencv.features2d.ORB;
 import org.opencv.imgproc.Imgproc;
 
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 统一的模板匹配器 - 基于ORB算法
@@ -44,11 +48,29 @@ public class SimpleTemplateMatcher {
     private static final float SCALE_FACTOR = 1.1f;    // 图像金字塔缩放比例：1.1 = 每层缩小到上一层的90.9%，更小的值 → 更密集的尺度采样 → 更好的尺度不变性，但会增加金字塔层数和计算量
     private static final int PYRAMID_LEVELS = 20;      // 金字塔层数：20层覆盖约8.2倍尺度变化(第20层为原图的12.2%)，更多层级 → 更大尺度变化容忍度
 
-    // 匹配质量参数 - 平衡召回率与准确率
-    private static final int MIN_MATCH_COUNT = 4;      // Homography最少匹配点：降至3个提高匹配成功率，理论需4个但3个可尝试
-    private static final float LOWE_RATIO = 1.0f;      // Lowe比率测试：1.0完全关闭过滤，接受所有匹配但会引入大量噪声，仅用于测试
-    private static final double RANSAC_THRESHOLD = 10.0; // RANSAC内点判定阈值：7像素容忍透视变形，适合条码场景但需防止误匹配
-    private static final float MIN_CONFIDENCE = 0.3f;   // 最低接受置信度：0.3降低误拒率，偏向"宁可错匹配不可漏匹配"策略
+    // 匹配质量参数 - 针对远距离场景优化
+    private static final int MIN_MATCH_COUNT = 4;      // Homography最少匹配点
+    private static final float LOWE_RATIO = 0.85f;     // 启用适度过滤，去除最差匹配
+    private static final double RANSAC_THRESHOLD = 12.0; // 放宽几何验证，适应远距离变形
+
+    // 特征缓存配置
+    private static final int MAX_CACHE_SIZE = 10;      // 最大缓存模板数量
+    
+    // 特征缓存 - 使用LRU策略
+    private final Map<Long, FeatureData> featureCache = new LinkedHashMap<Long, FeatureData>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Long, FeatureData> eldest) {
+            if (size() > MAX_CACHE_SIZE) {
+                MLog.d(TAG, ">> 清理缓存: templateId=" + eldest.getKey());
+                if (eldest.getValue() != null) {
+                    eldest.getValue().release();
+                }
+                return true;
+            }
+            return false;
+        }
+    };
+    private static final float MIN_CONFIDENCE = 0.2f;   // 降低最低置信度，适应远距离匹配场景
 
     private final ORB orbDetector;
     private final BFMatcher matcher;
@@ -68,6 +90,11 @@ public class SimpleTemplateMatcher {
                     31,               // patchSize: 特征点周围的patch大小，31x31像素用于描述符计算
                     3                 // fastThreshold: FAST角点检测阈值，降至3提高敏感度，检测更多潜在特征点
             );
+            
+            // 针对ORB二进制描述符，使用BruteForce匹配器
+            // FLANN虽然理论上支持LSH索引处理二进制描述符，但在实际使用中
+            // 对ORB描述符的支持不够稳定，容易出现格式不支持的错误
+            // BruteForce虽然慢一些，但对二进制描述符有完美支持
             this.matcher = BFMatcher.create(BFMatcher.BRUTEFORCE_HAMMING, false);
             this.initialized = true;
         } catch (Exception e) {
@@ -118,6 +145,29 @@ public class SimpleTemplateMatcher {
         public void release() {
             if (keypoints != null) keypoints.release();
             if (descriptors != null) descriptors.release();
+        }
+
+        /**
+         * 创建特征数据的副本（用于缓存）
+         */
+        public FeatureData clone() {
+            if (!isValid()) {
+                return null;
+            }
+            
+            try {
+                // 深拷贝keypoints
+                MatOfKeyPoint clonedKeypoints = new MatOfKeyPoint();
+                clonedKeypoints.fromArray(keypoints.toArray());
+                
+                // 深拷贝descriptors
+                Mat clonedDescriptors = descriptors.clone();
+                
+                return new FeatureData(clonedKeypoints, clonedDescriptors, extractionTimeMs);
+            } catch (Exception e) {
+                MLog.e(TAG, ">> FeatureData clone failed", e);
+                return null;
+            }
         }
     }
 
@@ -282,18 +332,41 @@ public class SimpleTemplateMatcher {
         long startTime = System.currentTimeMillis();
 
         try {
-            // 提取输入图像特征
-            FeatureData inputFeatures = extractFeaturesFromMat(inputMat);
+            // 并行化：同时进行输入特征提取和模板特征加载
+            CompletableFuture<FeatureData> inputFuture = CompletableFuture.supplyAsync(() -> {
+                long extractStart = System.currentTimeMillis();
+                FeatureData features = extractFeaturesFromMat(inputMat);
+                long extractTime = System.currentTimeMillis() - extractStart;
+                MLog.d(TAG, String.format(">> 输入特征提取完成: %d个特征, 耗时=%dms", 
+                        features != null ? features.getCount() : 0, extractTime));
+                return features;
+            });
+
+            CompletableFuture<FeatureData> templateFuture = CompletableFuture.supplyAsync(() -> {
+                long loadStart = System.currentTimeMillis();
+                FeatureData features = loadTemplateFeatures(template);
+                long loadTime = System.currentTimeMillis() - loadStart;
+                MLog.d(TAG, String.format(">> 模板特征加载完成: %d个特征, 耗时=%dms", 
+                        features != null ? features.getCount() : 0, loadTime));
+                return features;
+            });
+
+            // 等待两个任务完成
+            FeatureData inputFeatures = inputFuture.get();
+            FeatureData templateFeatures = templateFuture.get();
+
             if (inputFeatures == null) {
+                if (templateFeatures != null) templateFeatures.release();
                 return MatchResult.failure("Failed to extract input features");
             }
 
-            // 加载模板特征
-            FeatureData templateFeatures = loadTemplateFeatures(template);
             if (templateFeatures == null) {
                 inputFeatures.release();
                 return MatchResult.failure("Failed to load template features");
             }
+
+            long parallelTime = System.currentTimeMillis() - startTime;
+            MLog.d(TAG, String.format(">> 并行特征准备完成: 总耗时=%dms", parallelTime));
 
             // 执行匹配
             MatchResult result = performMatching(inputFeatures, templateFeatures, template,
@@ -382,9 +455,22 @@ public class SimpleTemplateMatcher {
     // ==================== 内部实现 ====================
 
     /**
-     * 加载模板特征
+     * 加载模板特征（带缓存）
      */
     private FeatureData loadTemplateFeatures(Template template) {
+        Long templateId = template.getId();
+        
+        // 检查缓存
+        synchronized (featureCache) {
+            FeatureData cached = featureCache.get(templateId);
+            if (cached != null) {
+                MLog.d(TAG, ">> 使用缓存特征: templateId=" + templateId);
+                return cached.clone(); // 返回副本，避免并发修改
+            }
+        }
+        
+        // 缓存未命中，加载特征文件
+        long loadStart = System.currentTimeMillis();
         try {
             MatOfKeyPoint keypoints = FeatureSerializer.loadKeypoints(template.getKeypointsPath());
             Mat descriptors = FeatureSerializer.loadDescriptors(template.getDescriptorsPath());
@@ -392,13 +478,25 @@ public class SimpleTemplateMatcher {
             if (keypoints == null || descriptors == null) {
                 if (keypoints != null) keypoints.release();
                 if (descriptors != null) descriptors.release();
+                MLog.w(TAG, ">> 特征加载失败: templateId=" + templateId);
                 return null;
             }
 
-            return new FeatureData(keypoints, descriptors, 0);
+            FeatureData features = new FeatureData(keypoints, descriptors, 0);
+            long loadTime = System.currentTimeMillis() - loadStart;
+            
+            // 缓存特征数据
+            synchronized (featureCache) {
+                featureCache.put(templateId, features.clone());
+                MLog.d(TAG, String.format(">> 缓存新特征: templateId=%d, 耗时=%dms, 缓存大小=%d", 
+                        templateId, loadTime, featureCache.size()));
+            }
+            
+            return features;
 
         } catch (Exception e) {
-            MLog.e(TAG, ">> loadTemplateFeatures failed", e);
+            long loadTime = System.currentTimeMillis() - loadStart;
+            MLog.e(TAG, String.format(">> 特征加载异常: templateId=%d, 耗时=%dms", templateId, loadTime), e);
             return null;
         }
     }
@@ -416,28 +514,65 @@ public class SimpleTemplateMatcher {
      */
     private MatchResult performMatching(FeatureData inputFeatures, FeatureData templateFeatures,
                                         Template template, int imageWidth, int imageHeight, long startTime, boolean isLabelDetectionMode) {
+        
+        // 记录匹配开始信息
+        MLog.d(TAG, String.format(">> 开始特征匹配: 输入特征=%d, 模板特征=%d, 模板=%s", 
+                inputFeatures.getCount(), templateFeatures.getCount(), template.getName()));
+        
         try {
+            // 验证特征数据有效性
+            if (!inputFeatures.isValid() || !templateFeatures.isValid()) {
+                String error = String.format("特征数据无效: 输入=%s, 模板=%s", 
+                        inputFeatures.isValid(), templateFeatures.isValid());
+                MLog.w(TAG, ">> " + error);
+                return MatchResult.failure(error);
+            }
+            
             // 特征匹配
+            long matchStart = System.currentTimeMillis();
             List<MatOfDMatch> knnMatches = new ArrayList<>();
             matcher.knnMatch(inputFeatures.descriptors, templateFeatures.descriptors, knnMatches, 2);
+            long knnTime = System.currentTimeMillis() - matchStart;
+            
+            MLog.d(TAG, String.format(">> BruteForce匹配完成: 原始匹配=%d, 耗时=%dms", knnMatches.size(), knnTime));
 
             // Lowe's ratio test + 距离筛选
+            long filterStart = System.currentTimeMillis();
             List<DMatch> goodMatches = new ArrayList<>();
+            int ratioRejected = 0;
+            int distanceRejected = 0;
+            float minDistance = Float.MAX_VALUE;
+            float maxDistance = Float.MIN_VALUE;
+            
             for (MatOfDMatch matOfDMatch : knnMatches) {
                 DMatch[] matches = matOfDMatch.toArray();
                 if (matches.length >= 2) {
                     DMatch bestMatch = matches[0];
                     DMatch secondMatch = matches[1];
 
+                    // 记录距离统计
+                    minDistance = Math.min(minDistance, bestMatch.distance);
+                    maxDistance = Math.max(maxDistance, bestMatch.distance);
+
                     // Lowe's ratio test
                     if (bestMatch.distance < LOWE_RATIO * secondMatch.distance) {
-                        // 额外的距离筛选：过滤掉距离过大的匹配
-                        if (bestMatch.distance < 250.0f) {  // 距离阈值
+                        // 放宽距离筛选：适应远距离匹配
+                        if (bestMatch.distance < 350.0f) {  // 从250.0f增加到350.0f
                             goodMatches.add(bestMatch);
+                        } else {
+                            distanceRejected++;
                         }
+                    } else {
+                        ratioRejected++;
                     }
                 }
             }
+            
+            long filterTime = System.currentTimeMillis() - filterStart;
+            
+            // 详细的匹配统计
+            MLog.d(TAG, String.format(">> 匹配过滤完成: 好匹配=%d, Ratio拒绝=%d, 距离拒绝=%d, 距离范围=%.1f-%.1f, 耗时=%dms", 
+                    goodMatches.size(), ratioRejected, distanceRejected, minDistance, maxDistance, filterTime));
 
             // 释放临时数据
             for (MatOfDMatch matOfDMatch : knnMatches) {
@@ -445,17 +580,21 @@ public class SimpleTemplateMatcher {
             }
 
             if (goodMatches.size() < MIN_MATCH_COUNT) {
-                MLog.w(TAG, String.format(">> Insufficient matches: %d < %d (required)", goodMatches.size(), MIN_MATCH_COUNT));
-                return MatchResult.failure("Insufficient matches: " + goodMatches.size());
+                String error = String.format("匹配点不足: %d < %d (需要), 原始=%d, Ratio拒绝=%d, 距离拒绝=%d", 
+                        goodMatches.size(), MIN_MATCH_COUNT, knnMatches.size(), ratioRejected, distanceRejected);
+                MLog.w(TAG, ">> " + error);
+                return MatchResult.failure(error);
             }
 
             // 几何验证
+            MLog.d(TAG, String.format(">> 进入几何验证: 匹配点=%d", goodMatches.size()));
             return performGeometryValidation(inputFeatures, templateFeatures, goodMatches,
                     template, imageWidth, imageHeight, startTime, isLabelDetectionMode);
 
         } catch (Exception e) {
-            MLog.e(TAG, ">> performMatching failed", e);
-            return MatchResult.failure("Matching error: " + e.getMessage());
+            String error = "匹配异常: " + e.getMessage();
+            MLog.e(TAG, ">> " + error, e);
+            return MatchResult.failure(error);
         }
     }
 
@@ -494,15 +633,20 @@ public class SimpleTemplateMatcher {
             }
             float avgDistance = totalDistance / goodMatches.size();
 
+            MLog.d(TAG, String.format(">> 几何验证开始: 匹配点=%d, 平均距离=%.2f, 模式=%s", 
+                    goodMatches.size(), avgDistance, isLabelDetectionMode ? "标签检测" : "全图"));
+
             // 计算置信度（基于特征匹配质量）
             float inlierRatio = 1.0f; // 默认值，在标签检测模式下不使用RANSAC
             float confidence;
 
             if (isLabelDetectionMode) {
                 // 标签检测模式：跳过Homography计算，直接使用原始区域坐标
+                MLog.d(TAG, ">> 标签检测模式: 跳过Homography计算");
 
                 // 基于特征匹配质量计算置信度，不依赖几何验证
                 confidence = calculateConfidence(goodMatches.size(), 0.85f, avgDistance); // 假设较高的内点比例
+                MLog.d(TAG, String.format(">> 标签检测模式置信度: %.3f (基于%d个匹配点)", confidence, goodMatches.size()));
 
                 // 直接使用模板的原始区域坐标（不进行Homography变换）
                 List<MatchResult.TransformedRegion> transformedRegions =
@@ -510,10 +654,14 @@ public class SimpleTemplateMatcher {
 
                 // 检查是否有有效的变换区域
                 if (transformedRegions.isEmpty()) {
-                    return MatchResult.failure("No valid regions after geometric transformation");
+                    String error = "标签检测模式: 区域变换后无有效区域";
+                    MLog.w(TAG, ">> " + error);
+                    return MatchResult.failure(error);
                 }
 
                 long matchTime = System.currentTimeMillis() - startTime;
+                MLog.d(TAG, String.format(">> 标签检测模式匹配成功: 置信度=%.3f, 区域数=%d, 总耗时=%dms", 
+                        confidence, transformedRegions.size(), matchTime));
 
                 return new MatchResult.Builder()
                         .setSuccess(true)
@@ -531,6 +679,9 @@ public class SimpleTemplateMatcher {
 
             } else {
                 // 全图模式：使用传统的Homography几何验证
+                MLog.d(TAG, ">> 全图模式: 开始Homography计算");
+                
+                long homographyStart = System.currentTimeMillis();
                 MatOfPoint2f srcPointsMat = new MatOfPoint2f();
                 srcPointsMat.fromList(srcPoints);
                 MatOfPoint2f dstPointsMat = new MatOfPoint2f();
@@ -543,35 +694,52 @@ public class SimpleTemplateMatcher {
 
                 srcPointsMat.release();
                 dstPointsMat.release();
+                long homographyTime = System.currentTimeMillis() - homographyStart;
 
                 if (homography == null || homography.empty()) {
-                    return MatchResult.failure("Failed to compute homography");
+                    String error = String.format("Homography计算失败: 耗时=%dms", homographyTime);
+                    MLog.w(TAG, ">> " + error);
+                    return MatchResult.failure(error);
                 }
 
-                // 计算置信度
+                // 计算内点统计
                 int inlierCount = Core.countNonZero(inlierMask);
                 inlierRatio = (float) inlierCount / goodMatches.size();
                 confidence = calculateConfidence(goodMatches.size(), inlierRatio, avgDistance);
+                
+                MLog.d(TAG, String.format(">> Homography计算成功: 内点=%d/%d (%.1f%%), 置信度=%.3f, 耗时=%dms", 
+                        inlierCount, goodMatches.size(), inlierRatio * 100, confidence, homographyTime));
 
                 if (confidence < MIN_CONFIDENCE) {
-                    return MatchResult.failure("Confidence too low: " + String.format("%.2f", confidence));
+                    String error = String.format("置信度过低: %.3f < %.3f (最小值)", confidence, MIN_CONFIDENCE);
+                    MLog.w(TAG, ">> " + error);
+                    return MatchResult.failure(error);
                 }
 
                 // 变换区域 - 使用Homography变换
+                long transformStart = System.currentTimeMillis();
                 List<MatchResult.TransformedRegion> transformedRegions =
                         transformRegions(template.getRegions(), homography, imageWidth, imageHeight);
+                long transformTime = System.currentTimeMillis() - transformStart;
 
                 // 检查是否有有效的变换区域
                 if (transformedRegions.isEmpty()) {
-                    MLog.w(TAG, ">> No valid regions after transformation - marking match as failed");
-                    return MatchResult.failure("No valid regions after geometric transformation");
+                    String error = String.format("区域变换失败: 无有效区域, 耗时=%dms", transformTime);
+                    MLog.w(TAG, ">> " + error);
+                    return MatchResult.failure(error);
                 }
 
                 // 计算模板位置
+                long cornerStart = System.currentTimeMillis();
                 PointF[] templateCorners = computeTemplateCorners(template, homography, imageWidth, imageHeight);
                 RectF templateBounds = computeBounds(templateCorners);
+                long cornerTime = System.currentTimeMillis() - cornerStart;
 
                 long matchTime = System.currentTimeMillis() - startTime;
+                
+                MLog.d(TAG, String.format(">> 全图模式匹配成功: 置信度=%.3f, 内点比=%.1f%%, 区域数=%d, 总耗时=%dms (H=%d+T=%d+C=%d)", 
+                        confidence, inlierRatio * 100, transformedRegions.size(), matchTime, 
+                        homographyTime, transformTime, cornerTime));
 
                 return new MatchResult.Builder()
                         .setSuccess(true)
@@ -588,6 +756,10 @@ public class SimpleTemplateMatcher {
                         .build();
             }
 
+        } catch (Exception e) {
+            String error = "几何验证异常: " + e.getMessage();
+            MLog.e(TAG, ">> " + error, e);
+            return MatchResult.failure(error);
         } finally {
             if (inlierMask != null) inlierMask.release();
             if (homography != null) homography.release();
@@ -595,32 +767,39 @@ public class SimpleTemplateMatcher {
     }
 
     /**
-     * 计算置信度 - 重视匹配质量版本
+     * 计算置信度 - 优化版本，适应实际匹配场景
      */
     private float calculateConfidence(int matchCount, float inlierRatio, float avgDistance) {
-        // 匹配数量评分：适中期望
-        float matchScore = Math.min(matchCount / 12.0f, 1.0f);
+        // 匹配数量评分：降低期望值，适应实际场景
+        float matchScore = Math.min(matchCount / 50.0f, 1.0f);  // 50个匹配点满分
 
-        // 内点比例评分：这是最重要的质量指标
-        float inlierScore = Math.min(inlierRatio / 0.4f, 1.0f);
+        // 内点比例评分：调整期望值，25%内点比例即可得满分
+        float inlierScore = Math.min(inlierRatio / 0.25f, 1.0f);
 
         // 距离评分：好的匹配应该有较小的距离
-        float distanceScore = Math.max(0, 1.0f - avgDistance / 250.0f);
+        float distanceScore = Math.max(0, 1.0f - avgDistance / 300.0f);  // 放宽距离要求
 
-        // 基础置信度：只有高质量匹配才给基础分
+        // 基础置信度：降低门槛，更符合实际情况
         float baseConfidence = 0.0f;
-        if (matchCount >= 15 && inlierRatio >= 0.5f) {
-            baseConfidence = 0.2f;  // 高质量匹配
-        } else if (matchCount >= 8 && inlierRatio >= 0.3f) {
-            baseConfidence = 0.1f;  // 中等质量匹配
+        if (matchCount >= 50 && inlierRatio >= 0.35f) {
+            baseConfidence = 0.3f;  // 高质量匹配
+        } else if (matchCount >= 20 && inlierRatio >= 0.20f) {
+            baseConfidence = 0.2f;  // 中等质量匹配
+        } else if (matchCount >= 10 && inlierRatio >= 0.15f) {
+            baseConfidence = 0.1f;  // 基础质量匹配
         }
 
-        // 权重分配：重视内点比例和距离
-        float confidence = 0.3f * matchScore + 0.5f * inlierScore + 0.2f * distanceScore + baseConfidence;
+        // 权重分配：更加重视内点比例，这是最可靠的质量指标
+        float confidence = 0.2f * matchScore + 0.6f * inlierScore + 0.1f * distanceScore + baseConfidence;
 
-        // 质量惩罚：内点比例过低时大幅降低置信度
-        if (inlierRatio < 0.2f) {
-            confidence *= 0.5f;  // 惩罚低质量匹配
+        // 质量惩罚：只对极低质量匹配进行惩罚
+        if (inlierRatio < 0.10f) {
+            confidence *= 0.6f;  // 惩罚极低质量匹配
+        }
+
+        // 质量奖励：对高质量匹配给予奖励
+        if (inlierRatio >= 0.40f && matchCount >= 100) {
+            confidence = Math.min(confidence * 1.1f, 1.0f);  // 奖励优秀匹配
         }
 
         confidence = Math.min(confidence, 1.0f);
@@ -738,7 +917,7 @@ public class SimpleTemplateMatcher {
         }
 
         // 4. 防止解码器崩溃：设置最小尺寸限制
-        final float MIN_SIZE = 10.0f;  // 降低到10x10像素，避免过度过滤
+        final float MIN_SIZE = 5.0f;  // 降低到5x5像素，进一步放宽限制
         if (width < MIN_SIZE || height < MIN_SIZE) {
             MLog.w(TAG, String.format(">> Region validation failed: %s -> too small %.1fx%.1f (min %.1f)",
                     regionName, width, height, MIN_SIZE));
@@ -746,7 +925,7 @@ public class SimpleTemplateMatcher {
         }
 
         // 5. 防止内存溢出：设置最大尺寸限制
-        final float MAX_SIZE = Math.max(imageWidth, imageHeight) * 5.0f;  // 放宽到3倍
+        final float MAX_SIZE = Math.max(imageWidth, imageHeight) * 10.0f;  // 进一步放宽
         if (width > MAX_SIZE || height > MAX_SIZE) {
             MLog.w(TAG, String.format(">> Region validation failed: %s -> too large %.1fx%.1f (max %.1f)",
                     regionName, width, height, MAX_SIZE));
@@ -755,7 +934,7 @@ public class SimpleTemplateMatcher {
 
         // 6. 检查长宽比，避免过于扁平或细长的区域
         float aspectRatio = Math.max(width, height) / Math.min(width, height);
-        final float MAX_ASPECT_RATIO = 50.0f;  // 放宽到50:1
+        final float MAX_ASPECT_RATIO = 100.0f;  // 进一步放宽到100:1
         if (aspectRatio > MAX_ASPECT_RATIO) {
             MLog.w(TAG, String.format(">> Region validation failed: %s -> extreme aspect ratio %.1f (max %.1f)",
                     regionName, aspectRatio, MAX_ASPECT_RATIO));
@@ -781,7 +960,7 @@ public class SimpleTemplateMatcher {
         }
 
         // 9. 检查是否超出合理范围（可能的变换异常）
-        final float MAX_COORD = Math.max(imageWidth, imageHeight) * 3.0f;  // 允许超出图像3倍范围
+        final float MAX_COORD = Math.max(imageWidth, imageHeight) * 5.0f;  // 放宽到5倍范围
         if (Math.abs(bounds.left) > MAX_COORD || Math.abs(bounds.top) > MAX_COORD ||
                 Math.abs(bounds.right) > MAX_COORD || Math.abs(bounds.bottom) > MAX_COORD) {
             MLog.w(TAG, String.format(">> Region validation failed: %s -> coordinates too extreme [%.1f,%.1f,%.1f,%.1f] (max %.1f)",
@@ -826,7 +1005,7 @@ public class SimpleTemplateMatcher {
             }
             area = Math.abs(area) / 2.0f;
 
-            if (area < 25.0f) {  // 降低面积要求到25平方像素
+            if (area < 10.0f) {  // 降低面积要求到10平方像素
                 MLog.w(TAG, String.format(">> Corner validation failed: %s -> degenerate quadrilateral (area %.1f)",
                         regionName, area));
                 return false;
@@ -910,6 +1089,17 @@ public class SimpleTemplateMatcher {
     }
 
     public void release() {
+        // 清理特征缓存
+        synchronized (featureCache) {
+            for (FeatureData features : featureCache.values()) {
+                if (features != null) {
+                    features.release();
+                }
+            }
+            featureCache.clear();
+            MLog.d(TAG, ">> 特征缓存已清理");
+        }
+        
         initialized = false;
     }
 }

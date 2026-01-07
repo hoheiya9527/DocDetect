@@ -62,7 +62,7 @@ public class CameraSettings {
         this.previewResolution = new Size(1280, 720);  // 预览使用720P
         this.analysisResolution = new Size(1920, 1080); // 分析使用1080P
         this.focusMode = FocusMode.CONTINUOUS;
-        this.exposureCompensation = 0;
+        this.exposureCompensation = -2;
         this.zoomRatio = 1.0f;
         this.enhanceConfig = new EnhanceConfig();
         this.confidenceThreshold = 0.99; // 默认置信度阈值99%
@@ -115,7 +115,7 @@ public class CameraSettings {
     }
 
     public void setExposureCompensation(int exposureCompensation) {
-        this.exposureCompensation = Math.max(-2, Math.min(2, exposureCompensation));
+        this.exposureCompensation = Math.max(-10, Math.min(5, exposureCompensation));
     }
 
     /**

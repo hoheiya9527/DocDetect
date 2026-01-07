@@ -9,12 +9,14 @@ import android.util.Log;
 import androidx.camera.core.ImageProxy;
 
 import com.urovo.templatedetector.model.DetectionResult;
+import com.urovo.templatedetector.util.MLog;
 import com.urovo.templatedetector.util.PerformanceTracker;
 
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfInt;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
@@ -34,7 +36,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -46,8 +47,8 @@ public class LabelDetector {
     private static final String TAG = "LabelDetector";
     private static final String MODEL_PATH = "model/fairscan-segmentation-model.tflite";
 
-    // 最小四边形面积比例
-    private static final double MIN_QUAD_AREA_RATIO = 0.02;
+    // 最小四边形面积比例（降低以适应面单场景）
+    private static final double MIN_QUAD_AREA_RATIO = 0.005;  // 从0.02降低到0.005
 
     private final Context context;
     private Interpreter interpreter;
@@ -282,126 +283,74 @@ public class LabelDetector {
     }
 
     /**
-     * 检测文档四边形
-     * Fallback 策略：
-     * 1. 直接从 mask 找 4 顶点轮廓
-     * 2. Fallback 1: detectDocumentQuadFromProbmap (Otsu + 阈值扫描)
-     * 3. Fallback 2: findQuadFromRightAngles (寻找直角)
-     * 4. Fallback 3: minAreaRect (最小外接矩形) - 仅非实时分析
+     * 面单精准检测算法（重写版）
+     * 
+     * 核心策略：
+     * 1. 精准阈值选择：基于概率图特征动态确定最优阈值
+     * 2. 边缘增强：使用形态学操作增强边缘连续性
+     * 3. 智能轮廓筛选：多重过滤条件确保质量
+     * 4. 简化评分系统：专注于面单特征的关键指标
      */
     private PointF[] detectDocumentQuad(float[] probMap, boolean isLiveAnalysis) {
-        // 创建掩码 Mat
-        Mat mask = probMapToMat(probMap);
+        MLog.d(TAG, ">> detectDocumentQuad: isLiveAnalysis=" + isLiveAnalysis);
+        
+        // 1. 分析概率图特征
+        ProbMapStats stats = analyzeProbMapStatistics(probMap);
+        MLog.d(TAG, String.format(">> ProbMap统计: mean=%.3f, stdDev=%.3f, median=%.3f, min=%.3f, max=%.3f",
+                stats.mean, stats.stdDev, stats.median, stats.min, stats.max));
 
-        // 尝试从掩码中找到最大轮廓
-        BiggestContourResult contourResult = biggestContour(mask);
+        // 2. 智能阈值选择（专为面单优化）
+        double optimalThreshold = selectOptimalThreshold(stats, isLiveAnalysis);
+        MLog.d(TAG, String.format(">> 选择最优阈值: %.3f", optimalThreshold));
 
-        PointF[] vertices = null;
-
-        // 如果找到了4个顶点的轮廓且面积足够大
-        if (contourResult.contour != null &&
-                contourResult.contour.total() == 4 &&
-                contourResult.area > outputWidth * outputHeight * MIN_QUAD_AREA_RATIO) {
-
-            Point[] points = contourResult.contour.toArray();
-            vertices = createQuad(points);
-        } else {
-            // Fallback 1: 自适应阈值
-            double[] thresholds = isLiveAnalysis
-                    ? new double[]{25.0, 50.0, 75.0}
-                    : generateThresholds(0.2, 0.8, 13);
-
-            vertices = detectDocumentQuadFromProbmap(mask, thresholds);
-
-            // Fallback 2: 如果还是没找到，但有多于4个顶点的轮廓，尝试从直角中找四边形
-            if (vertices == null && contourResult.contour != null && contourResult.contour.total() > 4) {
-                Point[] polygon = contourResult.contour.toArray();
-                vertices = findQuadFromRightAngles(polygon, outputWidth, outputHeight);
-
-                // Fallback 3: 最小外接矩形（仅非实时分析）
-                if (vertices == null && !isLiveAnalysis) {
-                    vertices = minAreaRect(contourResult.contour);
-                }
-            }
+        // 3. 生成增强的二值掩码
+        Mat enhancedMask = createEnhancedMask(probMap, optimalThreshold);
+        
+        // 4. 提取并筛选候选轮廓
+        List<LabelCandidate> candidates = extractLabelCandidates(enhancedMask);
+        MLog.d(TAG, ">> 提取候选数量: " + candidates.size());
+        
+        enhancedMask.release();
+        
+        if (candidates.isEmpty()) {
+            MLog.w(TAG, ">> 未找到任何候选");
+            return null;
         }
 
-        // 释放资源
-        mask.release();
-        if (contourResult.contour != null) {
-            contourResult.contour.release();
+        // 5. 计算面单特征评分
+        for (LabelCandidate candidate : candidates) {
+            candidate.calculateLabelScore(probMap, outputWidth, outputHeight);
         }
 
-        return vertices;
-    }
-
-    /**
-     * 将概率图转换为 Mat（二值掩码）
-     */
-    private Mat probMapToMat(float[] probMap) {
-        Mat mask = new Mat(outputHeight, outputWidth, CvType.CV_8UC1);
-        byte[] data = new byte[outputWidth * outputHeight];
-
-        for (int i = 0; i < probMap.length; i++) {
-            data[i] = probMap[i] >= 0.5f ? (byte) 255 : 0;
+        // 6. 按评分排序并选择最佳
+        candidates.sort((a, b) -> Double.compare(b.score, a.score));
+        
+        // 输出候选信息
+        int showCount = Math.min(3, candidates.size());
+        for (int i = 0; i < showCount; i++) {
+            LabelCandidate c = candidates.get(i);
+            MLog.d(TAG, String.format(">> 候选#%d: score=%.3f, area=%.0f, 矩形度=%.3f, 面积比=%.3f, 概率=%.3f",
+                    i + 1, c.score, c.area, c.rectangularity, c.areaRatio, c.avgProbability));
         }
 
-        mask.put(0, 0, data);
-        return mask;
-    }
-
-    /**
-     * 找到最大轮廓
-     */
-    private BiggestContourResult biggestContour(Mat mat) {
-        // refineMask
-        Mat refinedMask = refineMask(mat);
-
-        // 高斯模糊
-        Mat blurred = new Mat();
-        Imgproc.GaussianBlur(refinedMask, blurred, new Size(5, 5), 0);
-
-        // Canny 边缘检测
-        Mat edges = new Mat();
-        Imgproc.Canny(blurred, edges, 75, 200);
-
-        // 查找轮廓
-        List<MatOfPoint> contours = new ArrayList<>();
-        Mat hierarchy = new Mat();
-        Imgproc.findContours(edges, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
-
-        // 释放临时资源
-        refinedMask.release();
-        blurred.release();
-        edges.release();
-        hierarchy.release();
-
-        // >> 多标签检测验证日志
-        double totalArea = outputWidth * outputHeight;
-        MatOfPoint2f biggest = null;
-        double maxArea = 0;
-
-        for (MatOfPoint contour : contours) {
-            MatOfPoint2f contour2f = new MatOfPoint2f(contour.toArray());
-            double peri = Imgproc.arcLength(contour2f, true);
-            MatOfPoint2f approx = new MatOfPoint2f();
-            Imgproc.approxPolyDP(contour2f, approx, 0.02 * peri, true);
-
-            double area = Math.abs(Imgproc.contourArea(approx));
-
-            if (area > maxArea) {
-                maxArea = area;
-                if (biggest != null) {
-                    biggest.release();
-                }
-                biggest = approx;
-            } else {
-                approx.release();
-            }
-            contour2f.release();
-            contour.release();
+        // 7. 选择最佳候选
+        LabelCandidate best = candidates.get(0);
+        double minThreshold = isLiveAnalysis ? 0.4 : 0.5;  // 提高质量要求
+        
+        if (best.score < minThreshold) {
+            MLog.w(TAG, String.format(">> 最佳候选质量不足: %.3f < %.3f", best.score, minThreshold));
+            return null;
         }
 
-        return new BiggestContourResult(biggest, maxArea);
+        MLog.d(TAG, String.format(">> 选中最佳候选: score=%.3f, area=%.0f", best.score, best.area));
+
+        // 8. 精确角点排序
+        PointF[] quad = orderCornersCorrectly(best.corners);
+        MLog.d(TAG, String.format(">> 最终四边形: TL(%.1f,%.1f) TR(%.1f,%.1f) BR(%.1f,%.1f) BL(%.1f,%.1f)",
+                quad[0].x, quad[0].y, quad[1].x, quad[1].y, 
+                quad[2].x, quad[2].y, quad[3].x, quad[3].y));
+
+        return quad;
     }
 
     /**
@@ -427,429 +376,6 @@ public class LabelDetector {
         closed.release();
 
         return opened;
-    }
-
-    /**
-     * 从概率图中使用自适应阈值检测四边形
-     */
-    private PointF[] detectDocumentQuadFromProbmap(Mat probmap, double[] thresholds) {
-        // 转换为 8 位
-        Mat probmapU8 = new Mat();
-        probmap.convertTo(probmapU8, CvType.CV_8U, 255.0);
-
-        // 高斯模糊
-        Mat probmapSmooth = new Mat();
-        Imgproc.GaussianBlur(probmapU8, probmapSmooth, new Size(3, 3), 0);
-
-        double bestScore = 0;
-        PointF[] bestQuad = null;
-
-        // 1) Otsu
-        Mat otsu = new Mat();
-        Imgproc.threshold(probmapSmooth, otsu, 0, 255, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
-
-        PointF[] quad = findQuadFromBinaryMask(otsu);
-        if (quad != null) {
-            double score = scoreQuadAgainstProbmap(quad, probmap);
-            if (score > bestScore) {
-                bestScore = score;
-                bestQuad = quad;
-            }
-        }
-        otsu.release();
-
-        // 2) 阈值扫描
-        for (double thr : thresholds) {
-            Mat bin = new Mat();
-            Imgproc.threshold(probmapSmooth, bin, thr * 255, 255, Imgproc.THRESH_BINARY);
-
-            Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
-            Imgproc.morphologyEx(bin, bin, Imgproc.MORPH_CLOSE, kernel);
-            kernel.release();
-
-            quad = findQuadFromBinaryMask(bin);
-            if (quad != null) {
-                double score = scoreQuadAgainstProbmap(quad, probmap);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestQuad = quad;
-                }
-            }
-            bin.release();
-        }
-
-        probmapU8.release();
-        probmapSmooth.release();
-
-        return bestQuad;
-    }
-
-    /**
-     * 从二值掩码中找到四边形
-     */
-    private PointF[] findQuadFromBinaryMask(Mat binMask) {
-        Mat blurred = new Mat();
-        Imgproc.GaussianBlur(binMask, blurred, new Size(5, 5), 0);
-
-        Mat edges = new Mat();
-        Imgproc.Canny(blurred, edges, 75, 200);
-
-        List<MatOfPoint> contours = new ArrayList<>();
-        Imgproc.findContours(edges, contours, new Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
-
-        blurred.release();
-        edges.release();
-
-        MatOfPoint2f biggest = null;
-        double maxArea = 0;
-
-        for (MatOfPoint cnt : contours) {
-            MatOfPoint2f cnt2f = new MatOfPoint2f(cnt.toArray());
-            double peri = Imgproc.arcLength(cnt2f, true);
-            MatOfPoint2f approx = new MatOfPoint2f();
-            Imgproc.approxPolyDP(cnt2f, approx, 0.02 * peri, true);
-
-            // 只接受恰好 4 个顶点的轮廓
-            if (approx.rows() == 4) {
-                double area = Math.abs(Imgproc.contourArea(approx));
-                if (area > maxArea) {
-                    maxArea = area;
-                    if (biggest != null) {
-                        biggest.release();
-                    }
-                    biggest = approx;
-                } else {
-                    approx.release();
-                }
-            } else {
-                approx.release();
-            }
-            cnt2f.release();
-            cnt.release();
-        }
-
-        double totalArea = binMask.rows() * binMask.cols();
-        if (maxArea > totalArea * MIN_QUAD_AREA_RATIO && biggest != null) {
-            Point[] points = biggest.toArray();
-            biggest.release();
-            return createQuad(points);
-        }
-
-        if (biggest != null) {
-            biggest.release();
-        }
-        return null;
-    }
-
-    /**
-     * 计算四边形与概率图的匹配分数
-     */
-    private double scoreQuadAgainstProbmap(PointF[] quad, Mat probmap) {
-        // 创建多边形掩码
-        Mat mask = Mat.zeros(probmap.size(), CvType.CV_8U);
-        Point[] points = new Point[4];
-        for (int i = 0; i < 4; i++) {
-            points[i] = new Point(quad[i].x, quad[i].y);
-        }
-        MatOfPoint pts = new MatOfPoint(points);
-        List<MatOfPoint> contourList = new ArrayList<>();
-        contourList.add(pts);
-        Imgproc.fillPoly(mask, contourList, new Scalar(1));
-        pts.release();
-
-        // 转换为浮点
-        Mat maskFloat = new Mat();
-        mask.convertTo(maskFloat, CvType.CV_32F);
-        mask.release();
-
-        // 计算分数
-        Mat probFloat = new Mat();
-        probmap.convertTo(probFloat, CvType.CV_32F);
-
-        Mat masked = new Mat();
-        Core.multiply(probFloat, maskFloat, masked);
-
-        double sumMasked = Core.sumElems(masked).val[0];
-        double sumMask = Core.sumElems(maskFloat).val[0];
-        double meanProb = sumMask > 0 ? sumMasked / sumMask : 0;
-        double areaRatio = sumMask / (probmap.rows() * probmap.cols());
-
-        maskFloat.release();
-        probFloat.release();
-        masked.release();
-
-        return meanProb * (0.7 + 0.3 * areaRatio);
-    }
-
-    /**
-     * 创建四边形（按角度排序）
-     * 排序后: [0]=topLeft, [1]=topRight, [2]=bottomRight, [3]=bottomLeft
-     */
-    private PointF[] createQuad(Point[] vertices) {
-        if (vertices.length != 4) {
-            return null;
-        }
-
-        // 计算质心
-        double cx = 0, cy = 0;
-        for (Point p : vertices) {
-            cx += p.x;
-            cy += p.y;
-        }
-        cx /= 4;
-        cy /= 4;
-
-        // 按角度排序（从质心出发，逆时针）
-        final double fcx = cx;
-        final double fcy = cy;
-        Point[] sorted = vertices.clone();
-        Arrays.sort(sorted, Comparator.comparingDouble(p -> Math.atan2(p.y - fcy, p.x - fcx)));
-
-//        Log.d(TAG, "createQuad: centroid=(" + cx + ", " + cy + ")");
-//        for (int i = 0; i < 4; i++) {
-//            double angle = Math.toDegrees(Math.atan2(sorted[i].y - fcy, sorted[i].x - fcx));
-//            Log.d(TAG, "createQuad: sorted[" + i + "]=(" + sorted[i].x + ", " + sorted[i].y + "), angle=" + angle);
-//        }
-
-        // 返回：按角度排序后的四个点
-        return new PointF[]{
-                new PointF((float) sorted[0].x, (float) sorted[0].y),
-                new PointF((float) sorted[1].x, (float) sorted[1].y),
-                new PointF((float) sorted[2].x, (float) sorted[2].y),
-                new PointF((float) sorted[3].x, (float) sorted[3].y)
-        };
-    }
-
-    /**
-     * 最小外接矩形
-     */
-    private PointF[] minAreaRect(MatOfPoint2f contour) {
-        org.opencv.core.RotatedRect rect = Imgproc.minAreaRect(contour);
-        Point[] points = new Point[4];
-        rect.points(points);
-        return createQuad(points);
-    }
-
-    // ==================== 直角检测算法 ====================
-
-    /**
-     * 从多边形中寻找包含直角的四边形
-     * 查找连续3个近似直角的顶点，然后通过延长线交点构造第4个顶点
-     *
-     * @param polygon   多边形顶点数组
-     * @param imgWidth  图像宽度（用于边界检查）
-     * @param imgHeight 图像高度（用于边界检查）
-     * @return 找到的四边形顶点，未找到返回 null
-     */
-    private PointF[] findQuadFromRightAngles(Point[] polygon, int imgWidth, int imgHeight) {
-        return findQuadFromRightAngles(polygon, imgWidth, imgHeight, 60.0, 120.0);
-    }
-
-    /**
-     * 从多边形中寻找包含直角的四边形（带角度范围参数）
-     */
-    private PointF[] findQuadFromRightAngles(Point[] polygon, int imgWidth, int imgHeight,
-                                             double angleMin, double angleMax) {
-        if (polygon == null || polygon.length < 4) {
-            return null;
-        }
-
-        int n = polygon.length;
-
-        // 计算每个顶点的内角
-        double[] angles = new double[n];
-        for (int i = 0; i < n; i++) {
-            Point a = polygon[(i + n - 1) % n];
-            Point b = polygon[i];
-            Point c = polygon[(i + 1) % n];
-            angles[i] = orientedAngle(a, b, c);
-        }
-
-        PointF[] bestQuad = null;
-        double bestScore = Double.MAX_VALUE;
-
-        // 遍历所有可能的起始位置，寻找连续3个近似直角
-        for (int i = 0; i < n; i++) {
-            double angle0 = angles[i % n];
-            double angle1 = angles[(i + 1) % n];
-            double angle2 = angles[(i + 2) % n];
-
-            // 检查连续3个角是否都在直角范围内
-            if (isInRange(angle0, angleMin, angleMax) &&
-                    isInRange(angle1, angleMin, angleMax) &&
-                    isInRange(angle2, angleMin, angleMax)) {
-
-                Point a = polygon[(i + n - 1) % n];  // 第一条边的起点
-                Point b = polygon[i];                 // 第一个直角顶点
-                Point c = polygon[(i + 1) % n];       // 第二个直角顶点
-                Point d = polygon[(i + 2) % n];       // 第三个直角顶点
-                Point e = polygon[(i + 3) % n];       // 第三条边的终点
-
-                // 计算两条边的延长线交点作为第四个顶点
-                Point inter = lineIntersection(a, b, d, e);
-                if (inter == null) {
-                    continue;
-                }
-
-                // 构造四边形
-                Point[] quad = new Point[]{b, c, d, inter};
-
-                // 检查是否在图像边界内
-                if (!isQuadInBounds(quad, imgWidth, imgHeight)) {
-                    continue;
-                }
-
-                // 检查是否为凸四边形
-                if (!isConvexQuad(quad)) {
-                    continue;
-                }
-
-                // 计算四边形的角度误差分数（越小越好）
-                double score = quadAngleError(quad);
-                if (score < bestScore) {
-                    bestScore = score;
-                    bestQuad = createQuad(quad);
-                }
-            }
-        }
-
-        return bestQuad;
-    }
-
-    /**
-     * 计算有向角（从向量 ba 到向量 bc 的角度）
-     */
-    private double orientedAngle(Point a, Point b, Point c) {
-        double v1x = a.x - b.x;
-        double v1y = a.y - b.y;
-        double v2x = c.x - b.x;
-        double v2y = c.y - b.y;
-
-        double norm1 = Math.sqrt(v1x * v1x + v1y * v1y) + 1e-9;
-        double norm2 = Math.sqrt(v2x * v2x + v2y * v2y) + 1e-9;
-
-        double dot = (v1x * v2x + v1y * v2y) / (norm1 * norm2);
-        dot = Math.max(-1.0, Math.min(1.0, dot));
-
-        double cross = v1x * v2y - v1y * v2x;
-        double angle = Math.toDegrees(Math.acos(dot));
-
-        if (cross < 0) {
-            angle = 360.0 - angle;
-        }
-
-        return angle;
-    }
-
-    /**
-     * 计算两条直线的交点
-     * 直线1: 过点 p1 和 p2
-     * 直线2: 过点 p3 和 p4
-     */
-    private Point lineIntersection(Point p1, Point p2, Point p3, Point p4) {
-        double denom = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
-        if (Math.abs(denom) < 1e-6) {
-            return null;  // 平行或重合
-        }
-
-        double numX = p1.x * p2.y - p1.y * p2.x;
-        double numY = p3.x * p4.y - p3.y * p4.x;
-
-        double px = (numX * (p3.x - p4.x) - (p1.x - p2.x) * numY) / denom;
-        double py = (numX * (p3.y - p4.y) - (p1.y - p2.y) * numY) / denom;
-
-        return new Point(px, py);
-    }
-
-    /**
-     * 计算两点之间的角度（用于角度误差计算）
-     */
-    private double angleBetweenVectors(double v1x, double v1y, double v2x, double v2y) {
-        double norm1 = Math.sqrt(v1x * v1x + v1y * v1y) + 1e-9;
-        double norm2 = Math.sqrt(v2x * v2x + v2y * v2y) + 1e-9;
-        double dot = (v1x * v2x + v1y * v2y) / (norm1 * norm2);
-        dot = Math.max(-1.0, Math.min(1.0, dot));
-        return Math.toDegrees(Math.acos(dot));
-    }
-
-    /**
-     * 计算四边形的角度误差（与90度的偏差之和）
-     */
-    private double quadAngleError(Point[] quad) {
-        double error = 0;
-        for (int i = 0; i < 4; i++) {
-            Point a = quad[(i + 3) % 4];
-            Point b = quad[i];
-            Point c = quad[(i + 1) % 4];
-
-            double v1x = a.x - b.x;
-            double v1y = a.y - b.y;
-            double v2x = c.x - b.x;
-            double v2y = c.y - b.y;
-
-            double angle = angleBetweenVectors(v1x, v1y, v2x, v2y);
-            error += Math.abs(angle - 90.0);
-        }
-        return error;
-    }
-
-    /**
-     * 检查四边形是否为凸四边形
-     */
-    private boolean isConvexQuad(Point[] quad) {
-        if (quad.length != 4) {
-            return false;
-        }
-
-        int sign = 0;
-        for (int i = 0; i < 4; i++) {
-            Point a = quad[i];
-            Point b = quad[(i + 1) % 4];
-            Point c = quad[(i + 2) % 4];
-
-            double cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
-            int currentSign = (cross > 0) ? 1 : (cross < 0) ? -1 : 0;
-
-            if (sign == 0 && currentSign != 0) {
-                sign = currentSign;
-            } else if (currentSign != 0 && currentSign != sign) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * 检查四边形是否在图像边界内
-     */
-    private boolean isQuadInBounds(Point[] quad, int imgWidth, int imgHeight) {
-        for (Point p : quad) {
-            if (p.x < 0 || p.x >= imgWidth || p.y < 0 || p.y >= imgHeight) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * 检查角度是否在指定范围内
-     */
-    private boolean isInRange(double angle, double min, double max) {
-        return angle >= min && angle <= max;
-    }
-
-    // ==================== 直角检测算法结束 ====================
-
-    /**
-     * 生成阈值数组
-     */
-    private double[] generateThresholds(double start, double end, int count) {
-        double[] thresholds = new double[count];
-        double step = (end - start) / (count - 1);
-        for (int i = 0; i < count; i++) {
-            thresholds[i] = start + i * step;
-        }
-        return thresholds;
     }
 
     /**
@@ -1226,15 +752,451 @@ public class LabelDetector {
     }
 
     /**
-     * 最大轮廓结果
+     * 概率图统计特征
      */
-    private static class BiggestContourResult {
-        final MatOfPoint2f contour;
-        final double area;
+    private static class ProbMapStats {
+        float mean;
+        float stdDev;
+        float median;
+        float min;
+        float max;
 
-        BiggestContourResult(MatOfPoint2f contour, double area) {
-            this.contour = contour;
+        ProbMapStats(float mean, float stdDev, float median, float min, float max) {
+            this.mean = mean;
+            this.stdDev = stdDev;
+            this.median = median;
+            this.min = min;
+            this.max = max;
+        }
+    }
+
+    /**
+     * 面单候选类（简化版）
+     */
+    private static class LabelCandidate {
+        PointF[] corners;
+        double area;
+        double rectangularity;  // 矩形度
+        double areaRatio;       // 面积比例
+        double avgProbability;  // 平均概率
+        double score;           // 综合评分
+
+        LabelCandidate(PointF[] corners, double area) {
+            this.corners = corners;
             this.area = area;
         }
+
+        /**
+         * 计算面单特征评分（简化版）
+         */
+        void calculateLabelScore(float[] probMap, int imgWidth, int imgHeight) {
+            // 1. 矩形度评分（最重要）
+            rectangularity = calculateRectangularity();
+
+            // 2. 面积比例评分
+            double totalArea = imgWidth * imgHeight;
+            areaRatio = area / totalArea;
+            double areaScore = calculateAreaScore();
+
+            // 3. 概率图匹配评分
+            avgProbability = calculateAverageProbability(probMap, imgWidth, imgHeight);
+
+            // 4. 综合评分（权重优化）
+            score = rectangularity * 0.5 +      // 矩形度最重要
+                    areaScore * 0.3 +           // 面积合理性
+                    avgProbability * 0.2;       // 概率匹配
+        }
+
+        private double calculateRectangularity() {
+            if (corners.length != 4) return 0;
+
+            // 计算四个角的角度
+            double totalAngleError = 0;
+            for (int i = 0; i < 4; i++) {
+                PointF a = corners[(i + 3) % 4];
+                PointF b = corners[i];
+                PointF c = corners[(i + 1) % 4];
+
+                double angle = calculateAngle(a, b, c);
+                double error = Math.abs(angle - 90.0);
+                totalAngleError += error;
+            }
+
+            // 角度误差转换为分数
+            double avgError = totalAngleError / 4.0;
+            double angleScore = Math.max(0, 1.0 - avgError / 30.0);  // 30度误差对应0分
+
+            // 计算边长比例
+            double[] sides = new double[4];
+            for (int i = 0; i < 4; i++) {
+                sides[i] = distance(corners[i], corners[(i + 1) % 4]);
+            }
+
+            // 对边应该相等
+            double ratio1 = Math.min(sides[0], sides[2]) / Math.max(sides[0], sides[2]);
+            double ratio2 = Math.min(sides[1], sides[3]) / Math.max(sides[1], sides[3]);
+            double sideScore = (ratio1 + ratio2) / 2.0;
+
+            return (angleScore + sideScore) / 2.0;
+        }
+
+        private double calculateAreaScore() {
+            // 面单合理面积范围：5% - 60%
+            if (areaRatio >= 0.05 && areaRatio <= 0.6) {
+                return 1.0;
+            } else if (areaRatio < 0.05) {
+                return Math.max(0, areaRatio / 0.05);
+            } else {
+                return Math.max(0, 1.0 - (areaRatio - 0.6) / 0.4);
+            }
+        }
+
+        private double calculateAverageProbability(float[] probMap, int imgWidth, int imgHeight) {
+            // 创建多边形掩码
+            Mat mask = Mat.zeros(imgHeight, imgWidth, CvType.CV_8U);
+            Point[] points = new Point[4];
+            for (int i = 0; i < 4; i++) {
+                points[i] = new Point(corners[i].x, corners[i].y);
+            }
+            MatOfPoint pts = new MatOfPoint(points);
+            List<MatOfPoint> contourList = new ArrayList<>();
+            contourList.add(pts);
+            Imgproc.fillPoly(mask, contourList, new Scalar(1));
+            pts.release();
+
+            // 计算掩码内的平均概率
+            double sumProb = 0;
+            int count = 0;
+
+            for (int y = 0; y < imgHeight; y++) {
+                for (int x = 0; x < imgWidth; x++) {
+                    if (mask.get(y, x)[0] > 0) {
+                        sumProb += probMap[y * imgWidth + x];
+                        count++;
+                    }
+                }
+            }
+
+            mask.release();
+            return count > 0 ? sumProb / count : 0;
+        }
+
+        private double calculateAngle(PointF a, PointF b, PointF c) {
+            double v1x = a.x - b.x;
+            double v1y = a.y - b.y;
+            double v2x = c.x - b.x;
+            double v2y = c.y - b.y;
+
+            double norm1 = Math.sqrt(v1x * v1x + v1y * v1y) + 1e-9;
+            double norm2 = Math.sqrt(v2x * v2x + v2y * v2y) + 1e-9;
+
+            double dot = (v1x * v2x + v1y * v2y) / (norm1 * norm2);
+            dot = Math.max(-1.0, Math.min(1.0, dot));
+
+            return Math.toDegrees(Math.acos(dot));
+        }
+
+        private double distance(PointF p1, PointF p2) {
+            double dx = p2.x - p1.x;
+            double dy = p2.y - p1.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+    }
+
+    /**
+     * 智能阈值选择（专为面单优化）
+     */
+    private double selectOptimalThreshold(ProbMapStats stats, boolean isLiveAnalysis) {
+        // 基于日志分析的优化策略
+        double threshold;
+        
+        if (stats.median < 0.01) {
+            // 大部分像素为0，使用低阈值
+            threshold = Math.max(0.05, stats.mean * 0.8);
+        } else {
+            // 有明显的前景，使用中等阈值
+            threshold = Math.max(0.08, Math.min(0.25, stats.mean + 0.5 * stats.stdDev));
+        }
+        
+        // 实时模式使用更保守的阈值
+        if (isLiveAnalysis) {
+            threshold = Math.min(threshold, 0.15);
+        }
+        
+        return threshold;
+    }
+
+    /**
+     * 创建增强的二值掩码
+     */
+    private Mat createEnhancedMask(float[] probMap, double threshold) {
+        // 1. 基础二值化
+        Mat binaryMask = new Mat(outputHeight, outputWidth, CvType.CV_8UC1);
+        byte[] data = new byte[outputWidth * outputHeight];
+        int positivePixels = 0;
+        
+        for (int i = 0; i < probMap.length; i++) {
+            if (probMap[i] >= threshold) {
+                data[i] = (byte) 255;
+                positivePixels++;
+            } else {
+                data[i] = 0;
+            }
+        }
+        binaryMask.put(0, 0, data);
+        
+        double positiveRatio = (double) positivePixels / probMap.length;
+        MLog.d(TAG, String.format(">> >> 二值化结果: 正像素=%d (%.1f%%)", positivePixels, positiveRatio * 100));
+
+        // 2. 形态学增强
+        Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
+        
+        // 闭运算：连接断开的边缘
+        Mat closed = new Mat();
+        Imgproc.morphologyEx(binaryMask, closed, Imgproc.MORPH_CLOSE, kernel);
+        
+        // 开运算：去除小噪点
+        Mat opened = new Mat();
+        Imgproc.morphologyEx(closed, opened, Imgproc.MORPH_OPEN, kernel);
+        
+        binaryMask.release();
+        closed.release();
+        kernel.release();
+        
+        return opened;
+    }
+
+    /**
+     * 提取面单候选
+     */
+    private List<LabelCandidate> extractLabelCandidates(Mat mask) {
+        List<LabelCandidate> candidates = new ArrayList<>();
+        
+        // 1. 边缘检测
+        Mat edges = new Mat();
+        Imgproc.Canny(mask, edges, 50, 150);
+        
+        // 2. 查找轮廓
+        List<MatOfPoint> contours = new ArrayList<>();
+        Mat hierarchy = new Mat();
+        Imgproc.findContours(edges, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
+        
+        MLog.d(TAG, ">> >> 找到轮廓数量: " + contours.size());
+        
+        double minArea = outputWidth * outputHeight * 0.005;  // 最小0.5%面积
+        double maxArea = outputWidth * outputHeight * 0.9;    // 最大90%面积
+        
+        for (int i = 0; i < contours.size(); i++) {
+            MatOfPoint contour = contours.get(i);
+            double area = Imgproc.contourArea(contour);
+            
+            // 面积过滤
+            if (area < minArea || area > maxArea) {
+                continue;
+            }
+            
+            // 轮廓简化
+            MatOfPoint2f contour2f = new MatOfPoint2f(contour.toArray());
+            double perimeter = Imgproc.arcLength(contour2f, true);
+            
+            // 尝试多个epsilon值
+            double[] epsilons = {0.02, 0.03, 0.04, 0.05};
+            MatOfPoint2f bestApprox = null;
+            int bestVertices = Integer.MAX_VALUE;
+            
+            for (double epsilon : epsilons) {
+                MatOfPoint2f approx = new MatOfPoint2f();
+                Imgproc.approxPolyDP(contour2f, approx, epsilon * perimeter, true);
+                int vertices = approx.rows();
+                
+                if (vertices == 4) {
+                    if (bestApprox != null) bestApprox.release();
+                    bestApprox = approx;
+                    bestVertices = vertices;
+                    break;
+                } else if (vertices < bestVertices && vertices >= 4) {
+                    if (bestApprox != null) bestApprox.release();
+                    bestApprox = approx;
+                    bestVertices = vertices;
+                } else {
+                    approx.release();
+                }
+            }
+            
+            // 检查是否得到4个顶点
+            if (bestApprox == null || bestVertices != 4) {
+                if (bestApprox != null) bestApprox.release();
+                contour2f.release();
+                continue;
+            }
+            
+            Point[] points = bestApprox.toArray();
+            PointF[] corners = new PointF[4];
+            for (int j = 0; j < 4; j++) {
+                corners[j] = new PointF((float) points[j].x, (float) points[j].y);
+            }
+            
+            // 验证四边形有效性
+            if (!isValidQuadrilateral(corners)) {
+                bestApprox.release();
+                contour2f.release();
+                continue;
+            }
+            
+            candidates.add(new LabelCandidate(corners, area));
+            MLog.d(TAG, String.format(">> >> 添加候选: 面积=%.0f", area));
+            
+            bestApprox.release();
+            contour2f.release();
+        }
+        
+        edges.release();
+        hierarchy.release();
+        
+        return candidates;
+    }
+
+    /**
+     * 验证四边形有效性（宽松版）
+     */
+    private boolean isValidQuadrilateral(PointF[] corners) {
+        if (corners.length != 4) {
+            return false;
+        }
+        
+        // 1. 检查是否有重复点（降低阈值）
+        for (int i = 0; i < 4; i++) {
+            for (int j = i + 1; j < 4; j++) {
+                double dist = Math.sqrt(Math.pow(corners[i].x - corners[j].x, 2) + 
+                                      Math.pow(corners[i].y - corners[j].y, 2));
+                if (dist < 3.0) {  // 从5.0降低到3.0
+                    return false;
+                }
+            }
+        }
+        
+        // 2. 检查面积是否为正（简单的凸性检查）
+        double area = calculateQuadArea(corners);
+        if (area <= 0) {
+            return false;
+        }
+        
+        return true;
+    }
+
+    /**
+     * 计算四边形面积（使用鞋带公式）
+     */
+    private double calculateQuadArea(PointF[] corners) {
+        double area = 0;
+        for (int i = 0; i < 4; i++) {
+            int j = (i + 1) % 4;
+            area += corners[i].x * corners[j].y;
+            area -= corners[j].x * corners[i].y;
+        }
+        return Math.abs(area) / 2.0;
+    }
+
+    /**
+     * 分析概率图统计特征
+     */
+    private ProbMapStats analyzeProbMapStatistics(float[] probMap) {
+        float sum = 0;
+        float min = Float.MAX_VALUE;
+        float max = Float.MIN_VALUE;
+
+        for (float p : probMap) {
+            sum += p;
+            min = Math.min(min, p);
+            max = Math.max(max, p);
+        }
+
+        float mean = sum / probMap.length;
+
+        // 计算标准差
+        float sumSqDiff = 0;
+        for (float p : probMap) {
+            float diff = p - mean;
+            sumSqDiff += diff * diff;
+        }
+        float stdDev = (float) Math.sqrt(sumSqDiff / probMap.length);
+
+        // 计算中位数
+        float[] sorted = probMap.clone();
+        Arrays.sort(sorted);
+        float median = sorted[sorted.length / 2];
+
+        return new ProbMapStats(mean, stdDev, median, min, max);
+    }
+
+
+
+    /**
+     * 智能角点排序
+     * 返回顺序：[topLeft, topRight, bottomRight, bottomLeft]
+     */
+    private PointF[] orderCornersCorrectly(PointF[] points) {
+        if (points.length != 4) {
+            return points;
+        }
+
+        // 1. 找到最左上的点（x+y最小）
+        int topLeftIdx = 0;
+        float minSum = Float.MAX_VALUE;
+        for (int i = 0; i < 4; i++) {
+            float sum = points[i].x + points[i].y;
+            if (sum < minSum) {
+                minSum = sum;
+                topLeftIdx = i;
+            }
+        }
+
+        // 2. 找到最右下的点（x+y最大）
+        int bottomRightIdx = 0;
+        float maxSum = Float.MIN_VALUE;
+        for (int i = 0; i < 4; i++) {
+            float sum = points[i].x + points[i].y;
+            if (sum > maxSum) {
+                maxSum = sum;
+                bottomRightIdx = i;
+            }
+        }
+
+        // 3. 剩余两个点，根据叉积判断
+        List<Integer> remainingIndices = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            if (i != topLeftIdx && i != bottomRightIdx) {
+                remainingIndices.add(i);
+            }
+        }
+
+        PointF topLeft = points[topLeftIdx];
+        PointF bottomRight = points[bottomRightIdx];
+
+        int topRightIdx = -1;
+        int bottomLeftIdx = -1;
+
+        for (int idx : remainingIndices) {
+            PointF p = points[idx];
+            // 计算叉积：(bottomRight - topLeft) × (p - topLeft)
+            double cross = (bottomRight.x - topLeft.x) * (p.y - topLeft.y) -
+                    (bottomRight.y - topLeft.y) * (p.x - topLeft.x);
+
+            if (cross < 0) {
+                // 点在连线右侧 -> topRight
+                topRightIdx = idx;
+            } else {
+                // 点在连线左侧 -> bottomLeft
+                bottomLeftIdx = idx;
+            }
+        }
+
+        // 4. 按顺序返回
+        return new PointF[]{
+                points[topLeftIdx],
+                points[topRightIdx],
+                points[bottomRightIdx],
+                points[bottomLeftIdx]
+        };
     }
 }

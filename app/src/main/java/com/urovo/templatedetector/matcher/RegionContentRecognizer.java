@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * 区域内容识别器
  * 对模板匹配后的变换区域进行 OCR/条码识别
- * 
+ * <p>
  * 性能优化：
  * - 多区域并行识别
  * - 条码和 OCR 并行尝试
@@ -36,19 +36,27 @@ public class RegionContentRecognizer {
 
     private static final String TAG = "RegionContentRecognizer";
 
-    /** 单个区域识别超时时间（毫秒） */
+    /**
+     * 单个区域识别超时时间（毫秒）
+     */
     private static final long REGION_TIMEOUT_MS = 3000;
-    
-    /** 全部区域识别超时时间（毫秒） */
+
+    /**
+     * 全部区域识别超时时间（毫秒）
+     */
     private static final long TOTAL_TIMEOUT_MS = 10000;
 
-    /** 并行识别线程池 */
+    /**
+     * 并行识别线程池
+     */
     private final ExecutorService executor;
 
     private final OCREngine ocrEngine;
     private final BarcodeDecoder barcodeDecoder;
-    
-    /** 是否启用图像增强 */
+
+    /**
+     * 是否启用图像增强
+     */
     private boolean enableEnhance = true;
 
     public RegionContentRecognizer(OCREngine ocrEngine, BarcodeDecoder barcodeDecoder) {
@@ -61,6 +69,7 @@ public class RegionContentRecognizer {
 
     /**
      * 设置是否启用图像增强
+     *
      * @param enable true 启用增强（灰度+CLAHE），false 使用原图
      */
     public void setEnableEnhance(boolean enable) {
@@ -76,7 +85,8 @@ public class RegionContentRecognizer {
 
     /**
      * 并行识别所有变换区域的内容
-     * @param image 输入图像
+     *
+     * @param image              输入图像
      * @param transformedRegions 变换后的区域列表
      */
     public void recognizeAll(Bitmap image, List<MatchResult.TransformedRegion> transformedRegions) {
@@ -86,13 +96,13 @@ public class RegionContentRecognizer {
 
         long startTime = System.currentTimeMillis();
         int regionCount = transformedRegions.size();
-        
+
         // 预先裁剪所有区域图像
         List<RegionTask> tasks = new ArrayList<>();
         for (MatchResult.TransformedRegion region : transformedRegions) {
             RectF bounds = region.getTransformedBounds();
             if (bounds == null || region.getRegion() == null) continue;
-            
+
             Bitmap croppedImage = cropRegion(image, bounds, region.getRegion().getRegionType());
             if (croppedImage != null) {
                 tasks.add(new RegionTask(region, croppedImage));
@@ -216,7 +226,7 @@ public class RegionContentRecognizer {
                         StringBuilder sb = new StringBuilder();
                         float totalConfidence = 0;
                         int validCount = 0;
-                        
+
                         for (OCRResult result : results) {
                             if (result.isValid()) {
                                 if (sb.length() > 0) sb.append(" ");
@@ -225,7 +235,7 @@ public class RegionContentRecognizer {
                                 validCount++;
                             }
                         }
-                        
+
                         if (sb.length() > 0) {
                             ocrResult.set(sb.toString());
                             ocrConfidence.set(totalConfidence / validCount);
@@ -269,6 +279,7 @@ public class RegionContentRecognizer {
 
     /**
      * 对 Bitmap 进行图像增强（灰度 + CLAHE）
+     *
      * @param source 原始图像
      * @return 增强后的图像，失败返回 null
      */
@@ -282,7 +293,7 @@ public class RegionContentRecognizer {
         try {
             srcMat = new Mat();
             Utils.bitmapToMat(source, srcMat);
-            
+
             enhancedMat = ImageEnhancer.enhanceMat(srcMat);
             if (enhancedMat == null || enhancedMat.empty()) {
                 return null;
@@ -333,12 +344,12 @@ public class RegionContentRecognizer {
         float expandRatio = (regionType == TemplateRegion.RegionType.BARCODE)
                 ? TemplateRegion.EXPAND_RATIO_BARCODE
                 : TemplateRegion.EXPAND_RATIO_TEXT;
-        
+
         float width = bounds.width();
         float height = bounds.height();
         float expandX = width * expandRatio;
-        float expandY = height * expandRatio;
-        
+        float expandY = height * expandRatio * 2;//Y向上多扩展一倍避免高度不够
+
         int left = Math.max(0, (int) (bounds.left - expandX));
         int top = Math.max(0, (int) (bounds.top - expandY));
         int right = Math.min(source.getWidth(), (int) (bounds.right + expandX));

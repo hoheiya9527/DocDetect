@@ -138,7 +138,7 @@ public class CameraSettingsDialog extends DialogFragment {
         seekBarExposure.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                int value = progress - 2; // 范围 -2 到 +2
+                int value = progress - 10; // 范围 -10 到 +5
                 exposureValue.setText(String.valueOf(value));
             }
 
@@ -258,7 +258,7 @@ public class CameraSettingsDialog extends DialogFragment {
 
         // 曝光补偿
         int exposure = currentSettings.getExposureCompensation();
-        seekBarExposure.setProgress(exposure + 2);
+        seekBarExposure.setProgress(exposure + 10);
         exposureValue.setText(String.valueOf(exposure));
     }
 
@@ -303,7 +303,7 @@ public class CameraSettingsDialog extends DialogFragment {
         currentSettings.setFocusMode(CameraSettings.FocusMode.values()[focusModeIndex]);
 
         // 曝光补偿
-        currentSettings.setExposureCompensation(seekBarExposure.getProgress() - 2);
+        currentSettings.setExposureCompensation(seekBarExposure.getProgress() - 10);
 
         // 自动曝光始终开启（无需设置，isAutoExposure()方法始终返回true）
     }
