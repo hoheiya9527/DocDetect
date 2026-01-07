@@ -5,7 +5,7 @@ import android.graphics.Bitmap;
 
 import com.urovo.templatedetector.model.MatchResult;
 import com.urovo.templatedetector.model.Template;
-import com.urovo.templatedetector.utils.MLog;
+import com.urovo.templatedetector.util.MLog;
 
 import org.opencv.core.Mat;
 

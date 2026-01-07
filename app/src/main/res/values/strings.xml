@@ -21,9 +21,6 @@
     <string name="resolution">Resolution</string>
     <string name="focus_mode">Focus Mode</string>
     <string name="exposure_compensation">Exposure Compensation</string>
-    <string name="auto_exposure">Auto Exposure (AE)</string>
-    <string name="shutter_speed">Shutter Speed</string>
-    <string name="iso">ISO</string>
     
     <!-- Image Enhancement -->
     <string name="image_enhancement_settings">Image Enhancement Settings</string>

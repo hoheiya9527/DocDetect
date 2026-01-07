@@ -100,7 +100,10 @@ public class TemplateListActivity extends AppCompatActivity {
         recyclerViewTemplates.setAdapter(adapter);
 
         // FAB
-        fabAdd.setOnClickListener(v -> showAddMenu());
+        fabAdd.setOnClickListener(v -> {
+//            showAddMenu()
+            startCreateTemplate();
+        });
 
         // 分类选择
         chipGroupCategories.setOnCheckedStateChangeListener((group, checkedIds) -> {
@@ -195,25 +198,25 @@ public class TemplateListActivity extends AppCompatActivity {
         }
     }
 
-    private void showAddMenu() {
-        PopupMenu popup = new PopupMenu(this, fabAdd);
-        popup.getMenu().add(0, 1, 0, R.string.template_create_from_scan);
-        popup.getMenu().add(0, 2, 0, R.string.category_create);
-
-        popup.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == 1) {
-                // 从扫描创建模板
-                startCreateTemplate();
-                return true;
-            } else if (item.getItemId() == 2) {
-                showCreateCategoryDialog();
-                return true;
-            }
-            return false;
-        });
-
-        popup.show();
-    }
+//    private void showAddMenu() {
+//        PopupMenu popup = new PopupMenu(this, fabAdd);
+//        popup.getMenu().add(0, 1, 0, R.string.template_create_from_scan);
+//        popup.getMenu().add(0, 2, 0, R.string.category_create);
+//
+//        popup.setOnMenuItemClickListener(item -> {
+//            if (item.getItemId() == 1) {
+//                // 从扫描创建模板
+//                startCreateTemplate();
+//                return true;
+//            } else if (item.getItemId() == 2) {
+//                showCreateCategoryDialog();
+//                return true;
+//            }
+//            return false;
+//        });
+//
+//        popup.show();
+//    }
 
     private void startCreateTemplate() {
         if (categories.isEmpty()) {

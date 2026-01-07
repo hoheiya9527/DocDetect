@@ -22,9 +22,6 @@
     <string name="resolution">分辨率</string>
     <string name="focus_mode">对焦模式</string>
     <string name="exposure_compensation">曝光补偿</string>
-    <string name="auto_exposure">自动曝光 (AE)</string>
-    <string name="shutter_speed">快门速度</string>
-    <string name="iso">ISO</string>
     
     <!-- Image Enhancement -->
     <string name="image_enhancement_settings">图像增强设置</string>

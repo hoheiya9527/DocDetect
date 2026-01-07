@@ -39,11 +39,6 @@ public class CameraSettingsDialog extends DialogFragment {
     private Spinner spinnerFocusMode;
     private SeekBar seekBarExposure;
     private TextView exposureValue;
-    private CheckBox checkBoxAutoExposure;
-    private LinearLayout layoutShutterSpeed;
-    private Spinner spinnerShutterSpeed;
-    private LinearLayout layoutIso;
-    private Spinner spinnerIso;
 
     // 图像增强设置控件
     private CheckBox checkBoxEnableEnhance;
@@ -67,9 +62,6 @@ public class CameraSettingsDialog extends DialogFragment {
             "连续对焦",
             "手动对焦"
     };
-
-    private static final int[] ISO_VALUES = {0, 100, 200, 400, 800, 1600, 3200};
-    private static final String[] ISO_LABELS = {"自动", "100", "200", "400", "800", "1600", "3200"};
 
     public static CameraSettingsDialog newInstance(CameraSettings settings) {
         CameraSettingsDialog dialog = new CameraSettingsDialog();
@@ -109,11 +101,6 @@ public class CameraSettingsDialog extends DialogFragment {
         spinnerFocusMode = view.findViewById(R.id.spinnerFocusMode);
         seekBarExposure = view.findViewById(R.id.seekBarExposure);
         exposureValue = view.findViewById(R.id.exposureValue);
-        checkBoxAutoExposure = view.findViewById(R.id.checkBoxAutoExposure);
-        layoutShutterSpeed = view.findViewById(R.id.layoutShutterSpeed);
-        spinnerShutterSpeed = view.findViewById(R.id.spinnerShutterSpeed);
-        layoutIso = view.findViewById(R.id.layoutIso);
-        spinnerIso = view.findViewById(R.id.spinnerIso);
 
         // 图像增强设置控件
         checkBoxEnableEnhance = view.findViewById(R.id.checkBoxEnableEnhance);
@@ -147,29 +134,6 @@ public class CameraSettingsDialog extends DialogFragment {
         focusModeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerFocusMode.setAdapter(focusModeAdapter);
 
-        // 设置ISO适配器
-        ArrayAdapter<String> isoAdapter = new ArrayAdapter<>(
-                requireContext(),
-                android.R.layout.simple_spinner_item,
-                ISO_LABELS
-        );
-        isoAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinnerIso.setAdapter(isoAdapter);
-
-        // 设置快门速度适配器
-        ArrayAdapter<String> shutterSpeedAdapter = new ArrayAdapter<>(
-                requireContext(),
-                android.R.layout.simple_spinner_item,
-                CameraSettings.SHUTTER_SPEED_LABELS
-        );
-        shutterSpeedAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinnerShutterSpeed.setAdapter(shutterSpeedAdapter);
-
-        // 自动曝光开关监听 - AE开则隐藏快门和ISO，关则显示
-        checkBoxAutoExposure.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            updateManualExposureVisibility(!isChecked);
-        });
-
         // 曝光补偿监听
         seekBarExposure.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -188,16 +152,6 @@ public class CameraSettingsDialog extends DialogFragment {
 
     private void initEnhanceControls() {
         // 增强开关无需额外初始化
-    }
-
-    /**
-     * 更新手动曝光控件可见性
-     * @param visible true显示快门和ISO设置，false隐藏
-     */
-    private void updateManualExposureVisibility(boolean visible) {
-        int visibility = visible ? View.VISIBLE : View.GONE;
-        layoutShutterSpeed.setVisibility(visibility);
-        layoutIso.setVisibility(visibility);
     }
 
     private void initDetectionControls() {
@@ -306,30 +260,6 @@ public class CameraSettingsDialog extends DialogFragment {
         int exposure = currentSettings.getExposureCompensation();
         seekBarExposure.setProgress(exposure + 2);
         exposureValue.setText(String.valueOf(exposure));
-
-        // 自动曝光
-        boolean autoExposure = currentSettings.isAutoExposure();
-        checkBoxAutoExposure.setChecked(autoExposure);
-        updateManualExposureVisibility(!autoExposure);
-
-        // 快门速度
-        long shutterSpeed = currentSettings.getShutterSpeed();
-        long[] shutterValues = CameraSettings.SHUTTER_SPEED_VALUES;
-        for (int i = 0; i < shutterValues.length; i++) {
-            if (shutterValues[i] == shutterSpeed) {
-                spinnerShutterSpeed.setSelection(i);
-                break;
-            }
-        }
-
-        // ISO
-        int iso = currentSettings.getIso();
-        for (int i = 0; i < ISO_VALUES.length; i++) {
-            if (ISO_VALUES[i] == iso) {
-                spinnerIso.setSelection(i);
-                break;
-            }
-        }
     }
 
     private void populateEnhanceSettings() {
@@ -375,20 +305,7 @@ public class CameraSettingsDialog extends DialogFragment {
         // 曝光补偿
         currentSettings.setExposureCompensation(seekBarExposure.getProgress() - 2);
 
-        // 自动曝光
-        currentSettings.setAutoExposure(checkBoxAutoExposure.isChecked());
-
-        // 快门速度
-        int shutterIndex = spinnerShutterSpeed.getSelectedItemPosition();
-        if (shutterIndex >= 0 && shutterIndex < CameraSettings.SHUTTER_SPEED_VALUES.length) {
-            currentSettings.setShutterSpeed(CameraSettings.SHUTTER_SPEED_VALUES[shutterIndex]);
-        }
-
-        // ISO
-        int isoIndex = spinnerIso.getSelectedItemPosition();
-        if (isoIndex >= 0 && isoIndex < ISO_VALUES.length) {
-            currentSettings.setIso(ISO_VALUES[isoIndex]);
-        }
+        // 自动曝光始终开启（无需设置，isAutoExposure()方法始终返回true）
     }
 
     private void applyEnhanceSettings() {

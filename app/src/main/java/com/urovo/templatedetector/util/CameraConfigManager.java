@@ -128,7 +128,6 @@ public class CameraConfigManager {
         json.put("resolution_height", settings.getResolution().getHeight());
         json.put("focus_mode", settings.getFocusMode().name());
         json.put("exposure_compensation", settings.getExposureCompensation());
-        json.put("iso", settings.getIso());
         json.put("zoom_ratio", settings.getZoomRatio());
         
         // 增强配置
@@ -166,7 +165,6 @@ public class CameraConfigManager {
         }
         
         settings.setExposureCompensation(json.optInt("exposure_compensation", 0));
-        settings.setIso(json.optInt("iso", 0));
         settings.setZoomRatio((float) json.optDouble("zoom_ratio", 1.0));
         
         // 增强配置

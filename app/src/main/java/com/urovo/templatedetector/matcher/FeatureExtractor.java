@@ -2,7 +2,7 @@ package com.urovo.templatedetector.matcher;
 
 import android.graphics.Bitmap;
 
-import com.urovo.templatedetector.utils.MLog;
+import com.urovo.templatedetector.util.MLog;
 
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfKeyPoint;

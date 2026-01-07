@@ -8,7 +8,7 @@ import android.graphics.RectF;
 import com.urovo.templatedetector.model.MatchResult;
 import com.urovo.templatedetector.model.Template;
 import com.urovo.templatedetector.model.TemplateRegion;
-import com.urovo.templatedetector.utils.MLog;
+import com.urovo.templatedetector.util.MLog;
 
 import org.opencv.android.Utils;
 import org.opencv.calib3d.Calib3d;
@@ -38,16 +38,17 @@ public class SimpleTemplateMatcher {
 
     private static final String TAG = "SimpleTemplateMatcher";
 
-    // ORB参数 - 针对条码大尺度变化优化
-    private static final int MAX_FEATURES = 5000;  // 适当增加特征点
-    private static final float SCALE_FACTOR = 1.1f;  // 更密集的尺度采样
-    private static final int PYRAMID_LEVELS = 20;  // 增加到15层覆盖更大尺度范围
+    // ORB特征检测参数 - 针对条码大尺度变化优化
+    private static final int MAX_FEATURES = 3000;      // 每张图像最大特征点数：更多特征点 → 更高匹配成功率，但计算开销增大
 
-    // 匹配参数 - 提高匹配质量
-    private static final int MIN_MATCH_COUNT = 3;      // 提高到6个确保质量
-    private static final float LOWE_RATIO = 0.8f;     // 收紧到0.75提高质量
-    private static final double RANSAC_THRESHOLD = 7.0; // 收紧RANSAC阈值
-    private static final float MIN_CONFIDENCE = 0.3f;   // 提高置信度要求
+    private static final float SCALE_FACTOR = 1.1f;    // 图像金字塔缩放比例：1.1 = 每层缩小到上一层的90.9%，更小的值 → 更密集的尺度采样 → 更好的尺度不变性，但会增加金字塔层数和计算量
+    private static final int PYRAMID_LEVELS = 20;      // 金字塔层数：20层覆盖约8.2倍尺度变化(第20层为原图的12.2%)，更多层级 → 更大尺度变化容忍度
+
+    // 匹配质量参数 - 平衡召回率与准确率
+    private static final int MIN_MATCH_COUNT = 4;      // Homography最少匹配点：降至3个提高匹配成功率，理论需4个但3个可尝试
+    private static final float LOWE_RATIO = 1.0f;      // Lowe比率测试：1.0完全关闭过滤，接受所有匹配但会引入大量噪声，仅用于测试
+    private static final double RANSAC_THRESHOLD = 10.0; // RANSAC内点判定阈值：7像素容忍透视变形，适合条码场景但需防止误匹配
+    private static final float MIN_CONFIDENCE = 0.3f;   // 最低接受置信度：0.3降低误拒率，偏向"宁可错匹配不可漏匹配"策略
 
     private final ORB orbDetector;
     private final BFMatcher matcher;
@@ -55,17 +56,17 @@ public class SimpleTemplateMatcher {
 
     public SimpleTemplateMatcher(Context context) {
         try {
-            // 针对条码优化的ORB参数
+            // 针对条码优化的ORB参数配置
             this.orbDetector = ORB.create(
-                    MAX_FEATURES,     // nfeatures: 2500
-                    SCALE_FACTOR,     // scaleFactor: 1.1 (更密集采样)
-                    PYRAMID_LEVELS,   // nlevels: 15 (覆盖更大尺度范围)
-                    31,               // edgeThreshold: 31
-                    0,                // firstLevel: 0
-                    2,                // WTA_K: 2
-                    ORB.HARRIS_SCORE, // scoreType: HARRIS_SCORE
-                    31,               // patchSize: 31
-                    3                 // fastThreshold: 进一步降低到3
+                    MAX_FEATURES,     // nfeatures: 最大特征点数，使用上面定义的5000
+                    SCALE_FACTOR,     // scaleFactor: 金字塔缩放因子，使用上面定义的1.1f
+                    PYRAMID_LEVELS,   // nlevels: 金字塔层数，使用上面定义的20层
+                    31,               // edgeThreshold: 边缘阈值，31像素内的特征点会被过滤，防止边缘噪声
+                    0,                // firstLevel: 起始层级，0表示从原图开始构建金字塔
+                    2,                // WTA_K: 描述符计算中的随机点对数，2表示每次比较2个点的灰度值
+                    ORB.HARRIS_SCORE, // scoreType: 特征点评分方式，HARRIS_SCORE提供更稳定的角点检测
+                    31,               // patchSize: 特征点周围的patch大小，31x31像素用于描述符计算
+                    3                 // fastThreshold: FAST角点检测阈值，降至3提高敏感度，检测更多潜在特征点
             );
             this.matcher = BFMatcher.create(BFMatcher.BRUTEFORCE_HAMMING, false);
             this.initialized = true;

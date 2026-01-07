@@ -40,7 +40,7 @@ import com.urovo.templatedetector.model.MatchResult;
 import com.urovo.templatedetector.model.Template;
 import com.urovo.templatedetector.util.CameraConfigManager;
 import com.urovo.templatedetector.util.ImageEnhancer;
-import com.urovo.templatedetector.utils.MLog;
+import com.urovo.templatedetector.util.MLog;
 import com.urovo.templatedetector.view.CameraPreviewLayout;
 import com.urovo.templatedetector.view.CameraSettingsDialog;
 import com.urovo.templatedetector.view.OverlayView;

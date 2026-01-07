@@ -51,34 +51,11 @@ public class CameraSettings {
     private Size analysisResolution; // 分析分辨率
     private FocusMode focusMode;
     private int exposureCompensation;
-    private boolean autoExposure; // 自动曝光开关
-    private long shutterSpeed; // 快门速度（纳秒），0表示自动
-    private int iso;
     private float zoomRatio;
     private EnhanceConfig enhanceConfig;
     private double confidenceThreshold; // 置信度阈值
     private boolean autoCapture; // 自动捕获开关
     private double autoCaptureThreshold; // 自动捕获置信度阈值
-
-    // 常用快门速度值（纳秒）
-    public static final long[] SHUTTER_SPEED_VALUES = {
-            0L,                  // 自动
-            1000000000L / 8000,  // 1/8000s
-            1000000000L / 4000,  // 1/4000s
-            1000000000L / 2000,  // 1/2000s
-            1000000000L / 1000,  // 1/1000s
-            1000000000L / 500,   // 1/500s
-            1000000000L / 250,   // 1/250s
-            1000000000L / 125,   // 1/125s
-            1000000000L / 60,    // 1/60s
-            1000000000L / 30,    // 1/30s
-            1000000000L / 15     // 1/15s
-    };
-
-    public static final String[] SHUTTER_SPEED_LABELS = {
-            "Auto", "1/8000", "1/4000", "1/2000", "1/1000",
-            "1/500", "1/250", "1/125", "1/60", "1/30", "1/15"
-    };
 
     public CameraSettings() {
         // 默认值
@@ -86,9 +63,6 @@ public class CameraSettings {
         this.analysisResolution = new Size(1920, 1080); // 分析使用1080P
         this.focusMode = FocusMode.CONTINUOUS;
         this.exposureCompensation = 0;
-        this.autoExposure = true; // 默认开启自动曝光
-        this.shutterSpeed = 0; // 0表示自动
-        this.iso = 0; // 0表示自动
         this.zoomRatio = 1.0f;
         this.enhanceConfig = new EnhanceConfig();
         this.confidenceThreshold = 0.99; // 默认置信度阈值99%
@@ -144,28 +118,19 @@ public class CameraSettings {
         this.exposureCompensation = Math.max(-2, Math.min(2, exposureCompensation));
     }
 
+    /**
+     * 自动曝光始终开启
+     */
     public boolean isAutoExposure() {
-        return autoExposure;
+        return true;
     }
 
+    /**
+     * @deprecated 自动曝光始终开启，此方法无效
+     */
+    @Deprecated
     public void setAutoExposure(boolean autoExposure) {
-        this.autoExposure = autoExposure;
-    }
-
-    public long getShutterSpeed() {
-        return shutterSpeed;
-    }
-
-    public void setShutterSpeed(long shutterSpeed) {
-        this.shutterSpeed = Math.max(0, shutterSpeed);
-    }
-
-    public int getIso() {
-        return iso;
-    }
-
-    public void setIso(int iso) {
-        this.iso = Math.max(0, iso);
+        // 自动曝光始终开启，忽略设置
     }
 
     public float getZoomRatio() {
@@ -224,9 +189,6 @@ public class CameraSettings {
         copy.analysisResolution = this.analysisResolution;
         copy.focusMode = this.focusMode;
         copy.exposureCompensation = this.exposureCompensation;
-        copy.autoExposure = this.autoExposure;
-        copy.shutterSpeed = this.shutterSpeed;
-        copy.iso = this.iso;
         copy.zoomRatio = this.zoomRatio;
         copy.enhanceConfig = this.enhanceConfig.copy();
         copy.confidenceThreshold = this.confidenceThreshold;

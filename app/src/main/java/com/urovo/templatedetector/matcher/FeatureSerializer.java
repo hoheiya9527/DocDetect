@@ -1,8 +1,7 @@
 package com.urovo.templatedetector.matcher;
 
-import com.urovo.templatedetector.utils.MLog;
+import com.urovo.templatedetector.util.MLog;
 
-import org.opencv.core.CvType;
 import org.opencv.core.KeyPoint;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfKeyPoint;

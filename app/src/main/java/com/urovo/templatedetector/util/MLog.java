@@ -1,4 +1,4 @@
-package com.urovo.templatedetector.utils;
+package com.urovo.templatedetector.util;
 
 import android.util.Log;
 
