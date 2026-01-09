@@ -41,7 +41,9 @@ import com.urovo.templatedetector.util.CameraConfigManager;
 import com.urovo.templatedetector.view.RegionDrawView;
 
 import java.io.File;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +52,7 @@ import java.util.Map;
  * 模板编辑界面
  * 支持创建新模板和编辑已有模板的区域
  */
-public class TemplateEditorActivity extends AppCompatActivity 
+public class TemplateEditorActivity extends AppCompatActivity
         implements RegionDrawView.OnRegionListener {
 
     private static final String TAG = "TemplateEditorActivity";
@@ -88,7 +90,7 @@ public class TemplateEditorActivity extends AppCompatActivity
 
     private boolean isDrawingMode = false;
     private long nextRegionId = -1;
-    
+
     private int regionCounter = 0;
     private Map<String, Long> detectedToRegionMap = new HashMap<>();
 
@@ -99,14 +101,14 @@ public class TemplateEditorActivity extends AppCompatActivity
 
         parseIntent();
         initViews();
-        
+
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, 0);
             bottomToolbar.setPadding(0, 0, 0, systemBars.bottom);
             return insets;
         });
-        
+
         initService();
         loadData();
     }
@@ -138,7 +140,7 @@ public class TemplateEditorActivity extends AppCompatActivity
         recyclerViewRegions.setAdapter(regionAdapter);
 
         regionDrawView.setOnRegionListener(this);
-        
+
         regionDrawView.setOnDetectedRegionClickListener((region, isSelected) -> {
             if (isSelected) {
                 addRegionFromDetected(region);
@@ -157,34 +159,34 @@ public class TemplateEditorActivity extends AppCompatActivity
 
         updateTitle();
     }
-    
+
     private void addRegionFromDetected(DetectedRegion detected) {
         regionCounter++;
         String name = getString(R.string.region_auto_name, regionCounter);
-        
+
         TemplateRegion newRegion = detected.toTemplateRegion(name, templateId);
         newRegion.setSortOrder(regions.size());
         newRegion.setId(nextRegionId--);
-        
+
         regions.add(newRegion);
         detectedToRegionMap.put(detected.getId(), newRegion.getId());
-        
+
         regionDrawView.addRegion(new RegionDrawView.DrawableRegion(
                 newRegion.getId(),
                 name,
                 detected.getBoundingBox()
         ));
-        
+
         regionAdapter.notifyDataSetChanged();
     }
-    
+
     private void removeRegionByDetectedId(String detectedId) {
         Long regionId = detectedToRegionMap.get(detectedId);
         if (regionId == null) return;
-        
+
         detectedToRegionMap.remove(detectedId);
         regions.removeIf(r -> r.getId() == regionId);
-        
+
         for (int i = 0; i < regionDrawView.getRegionCount(); i++) {
             RegionDrawView.DrawableRegion dr = regionDrawView.getRegionAt(i);
             if (dr != null && dr.getId() == regionId) {
@@ -192,14 +194,14 @@ public class TemplateEditorActivity extends AppCompatActivity
                 break;
             }
         }
-        
+
         regionAdapter.notifyDataSetChanged();
     }
 
     private void initService() {
         service = TemplateMatchingService.getInstance(this);
         repository = TemplateRepository.getInstance(this);
-        
+
         AppInitializer initializer = AppInitializer.getInstance(this);
         contentExtractor = new ContentExtractor(this);
         if (initializer.isInitialized()) {
@@ -208,7 +210,7 @@ public class TemplateEditorActivity extends AppCompatActivity
                     initializer.getBarcodeDecoder()
             );
         }
-        
+
         // 从持久化设置中读取图像增强配置
         CameraSettings settings = CameraConfigManager.getInstance(this).loadSettings();
         if (settings != null) {
@@ -246,29 +248,30 @@ public class TemplateEditorActivity extends AppCompatActivity
         }
         regionDrawView.setRegions(drawableRegions);
         regionAdapter.notifyDataSetChanged();
-        
+
         if (mode == MODE_CREATE && templateBitmap != null) {
             detectRegions();
         }
     }
-    
+
     private void detectRegions() {
         showLoading(getString(R.string.detecting_regions));
-        
+
         contentExtractor.extract(templateBitmap, new ContentExtractor.ExtractionCallback() {
             @Override
-            public void onProgress(int current, int total) {}
+            public void onProgress(int current, int total) {
+            }
 
             @Override
             public void onComplete(List<DetectedRegion> detectedRegions) {
                 hideLoading();
-                
+
                 if (detectedRegions == null || detectedRegions.isEmpty()) {
-                    Toast.makeText(TemplateEditorActivity.this, 
+                    Toast.makeText(TemplateEditorActivity.this,
                             R.string.no_regions_detected, Toast.LENGTH_SHORT).show();
                     return;
                 }
-                
+
                 regionDrawView.setDetectedRegions(detectedRegions);
 //                Log.d(TAG, ">> Detected " + detectedRegions.size() + " regions");
             }
@@ -277,12 +280,12 @@ public class TemplateEditorActivity extends AppCompatActivity
             public void onError(Exception e) {
                 hideLoading();
 //                Log.e(TAG, ">> Region detection failed", e);
-                Toast.makeText(TemplateEditorActivity.this, 
+                Toast.makeText(TemplateEditorActivity.this,
                         R.string.region_detection_failed, Toast.LENGTH_SHORT).show();
             }
         });
     }
-    
+
     private void showLoading(String message) {
         if (loadingContainer != null) {
             loadingContainer.setVisibility(View.VISIBLE);
@@ -291,7 +294,7 @@ public class TemplateEditorActivity extends AppCompatActivity
             }
         }
     }
-    
+
     private void hideLoading() {
         if (loadingContainer != null) {
             loadingContainer.setVisibility(View.GONE);
@@ -305,7 +308,7 @@ public class TemplateEditorActivity extends AppCompatActivity
     private void toggleDrawingMode() {
         isDrawingMode = !isDrawingMode;
         regionDrawView.setDrawingMode(isDrawingMode);
-        
+
         if (isDrawingMode) {
             buttonAddRegion.setText(R.string.cancel);
             Toast.makeText(this, R.string.region_draw_hint, Toast.LENGTH_SHORT).show();
@@ -321,42 +324,42 @@ public class TemplateEditorActivity extends AppCompatActivity
         buttonAddRegion.setText(R.string.template_region_add);
         showRegionTypeDialog(bounds);
     }
-    
+
     private void showRegionTypeDialog(RectF bounds) {
         String[] types = {
                 getString(R.string.template_region_type_barcode),
                 getString(R.string.template_region_type_text)
         };
-        
+
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.template_region_type)
                 .setItems(types, (dialog, which) -> {
-                    TemplateRegion.RegionType type = (which == 0) 
-                            ? TemplateRegion.RegionType.BARCODE 
+                    TemplateRegion.RegionType type = (which == 0)
+                            ? TemplateRegion.RegionType.BARCODE
                             : TemplateRegion.RegionType.TEXT;
                     createManualRegion(bounds, type);
                 })
                 .setNegativeButton(R.string.cancel, null)
                 .show();
     }
-    
+
     private void createManualRegion(RectF bounds, TemplateRegion.RegionType type) {
         regionCounter++;
         String name = getString(R.string.region_auto_name, regionCounter);
-        
+
         TemplateRegion newRegion = new TemplateRegion(name, templateId, type);
         newRegion.setBoundingBox(bounds);
         newRegion.setSortOrder(regions.size());
         newRegion.setId(nextRegionId--);
-        
+
         regions.add(newRegion);
-        
+
         regionDrawView.addRegion(new RegionDrawView.DrawableRegion(
                 newRegion.getId(),
                 name,
                 bounds
         ));
-        
+
         regionAdapter.notifyDataSetChanged();
     }
 
@@ -408,13 +411,12 @@ public class TemplateEditorActivity extends AppCompatActivity
     private void showTemplateNameDialog() {
         View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_template_name_simple, null);
         TextInputEditText editName = dialogView.findViewById(R.id.editTextTemplateName);
-
+        editName.setText("T_" + new SimpleDateFormat("yyMMddHHmmssSSS").format(new Date()));
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.template_create)
                 .setView(dialogView)
                 .setPositiveButton(R.string.ok, (dialog, which) -> {
                     String name = editName.getText() != null ? editName.getText().toString().trim() : "";
-                    
                     if (name.isEmpty()) {
                         Toast.makeText(this, R.string.template_input_name, Toast.LENGTH_SHORT).show();
                         return;
@@ -457,7 +459,7 @@ public class TemplateEditorActivity extends AppCompatActivity
             region.setId(0);
             region.setSortOrder(i);
         }
-        
+
         if (service.addRegionsToTemplate(templateId, regions)) {
             Toast.makeText(this, R.string.template_save_success, Toast.LENGTH_SHORT).show();
             setResult(RESULT_OK);
@@ -512,7 +514,7 @@ public class TemplateEditorActivity extends AppCompatActivity
 
             void bind(TemplateRegion region) {
                 textViewRegionName.setText(region.getName());
-                
+
                 String typeText = region.getRegionType() == TemplateRegion.RegionType.TEXT
                         ? getString(R.string.template_region_type_text)
                         : getString(R.string.template_region_type_barcode);
@@ -524,7 +526,7 @@ public class TemplateEditorActivity extends AppCompatActivity
 
                 // 点击移除该区域
                 itemView.setOnClickListener(v -> removeRegion(region));
-                
+
                 itemView.setOnLongClickListener(v -> {
                     showRegionEditDialog(region);
                     return true;
@@ -532,11 +534,11 @@ public class TemplateEditorActivity extends AppCompatActivity
             }
         }
     }
-    
+
     private void removeRegion(TemplateRegion region) {
         // 从 regions 列表移除
         regions.remove(region);
-        
+
         // 从 RegionDrawView 移除
         for (int i = 0; i < regionDrawView.getRegionCount(); i++) {
             RegionDrawView.DrawableRegion dr = regionDrawView.getRegionAt(i);
@@ -545,7 +547,7 @@ public class TemplateEditorActivity extends AppCompatActivity
                 break;
             }
         }
-        
+
         // 取消对应检测区域的选中状态
         String detectedIdToRemove = null;
         for (Map.Entry<String, Long> entry : detectedToRegionMap.entrySet()) {
@@ -558,38 +560,38 @@ public class TemplateEditorActivity extends AppCompatActivity
         if (detectedIdToRemove != null) {
             detectedToRegionMap.remove(detectedIdToRemove);
         }
-        
+
         regionAdapter.notifyDataSetChanged();
     }
-    
+
     private void showRegionEditDialog(TemplateRegion region) {
         View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_region_edit_simple, null);
         TextInputEditText editName = dialogView.findViewById(R.id.editTextRegionName);
-        
+
         com.google.android.material.chip.Chip chipBarcode = dialogView.findViewById(R.id.chipBarcode);
         com.google.android.material.chip.Chip chipText = dialogView.findViewById(R.id.chipText);
-        
+
         editName.setText(region.getName());
         if (region.getRegionType() == TemplateRegion.RegionType.TEXT) {
             chipText.setChecked(true);
         } else {
             chipBarcode.setChecked(true);
         }
-        
+
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.template_edit)
                 .setView(dialogView)
                 .setPositiveButton(R.string.ok, (dialog, which) -> {
                     String name = editName.getText() != null ? editName.getText().toString().trim() : "";
                     if (name.isEmpty()) name = region.getName();
-                    
-                    TemplateRegion.RegionType type = chipText.isChecked() 
-                            ? TemplateRegion.RegionType.TEXT 
+
+                    TemplateRegion.RegionType type = chipText.isChecked()
+                            ? TemplateRegion.RegionType.TEXT
                             : TemplateRegion.RegionType.BARCODE;
-                    
+
                     region.setName(name);
                     region.setRegionType(type);
-                    
+
                     for (int i = 0; i < regionDrawView.getRegionCount(); i++) {
                         RegionDrawView.DrawableRegion dr = regionDrawView.getRegionAt(i);
                         if (dr != null && dr.getId() == region.getId()) {
@@ -597,7 +599,7 @@ public class TemplateEditorActivity extends AppCompatActivity
                             break;
                         }
                     }
-                    
+
                     regionDrawView.invalidate();
                     regionAdapter.notifyDataSetChanged();
                 })

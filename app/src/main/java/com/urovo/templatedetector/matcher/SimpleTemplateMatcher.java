@@ -43,10 +43,10 @@ public class SimpleTemplateMatcher {
     private static final String TAG = "SimpleTemplateMatcher";
 
     // ORB特征检测参数 - 针对条码大尺度变化优化
-    private static final int MAX_FEATURES = 3000;      // 每张图像最大特征点数：更多特征点 → 更高匹配成功率，但计算开销增大
+    private static final int MAX_FEATURES = 2800;      // 每张图像最大特征点数：更多特征点 → 更高匹配成功率，但计算开销增大
 
-    private static final float SCALE_FACTOR = 1.1f;    // 图像金字塔缩放比例：1.1 = 每层缩小到上一层的90.9%，更小的值 → 更密集的尺度采样 → 更好的尺度不变性，但会增加金字塔层数和计算量
-    private static final int PYRAMID_LEVELS = 20;      // 金字塔层数：20层覆盖约8.2倍尺度变化(第20层为原图的12.2%)，更多层级 → 更大尺度变化容忍度
+    private static final float SCALE_FACTOR = 1.2f;    // 图像金字塔缩放比例：1.1 = 每层缩小到上一层的90.9%，更小的值 → 更密集的尺度采样 → 更好的尺度不变性，但会增加金字塔层数和计算量
+    private static final int PYRAMID_LEVELS = 10;      // 金字塔层数：20层覆盖约8.2倍尺度变化(第20层为原图的12.2%)，更多层级 → 更大尺度变化容忍度
 
     // 匹配质量参数 - 针对远距离场景优化
     private static final int MIN_MATCH_COUNT = 4;      // Homography最少匹配点

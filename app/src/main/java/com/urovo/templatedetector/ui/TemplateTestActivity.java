@@ -35,6 +35,7 @@ import com.urovo.templatedetector.matcher.RegionContentRecognizer;
 import com.urovo.templatedetector.matcher.TemplateMatchingService;
 import com.urovo.templatedetector.matcher.TemplateRepository;
 import com.urovo.templatedetector.model.CameraSettings;
+import com.urovo.templatedetector.model.CorrectionData;
 import com.urovo.templatedetector.model.DetectionResult;
 import com.urovo.templatedetector.model.MatchResult;
 import com.urovo.templatedetector.model.Template;
@@ -69,10 +70,10 @@ public class TemplateTestActivity extends AppCompatActivity {
     public static final String EXTRA_TEMPLATE_ID = "template_id";
 
     // 匹配配置
-    private static final int MATCH_MAX_DIMENSION = 1920;
-    private static final int STABLE_FRAME_THRESHOLD = 1;    // 增加到3帧，减少匹配频率
-    private static final int LOST_FRAME_THRESHOLD = 10;      // 增加到5帧，减少检测框闪烁
-    private static final long MATCH_COOLDOWN_MS = 0;      // 增加到300ms，给特征缓存更多时间
+    private static final int MATCH_MAX_DIMENSION = 1024;
+    private static final int STABLE_FRAME_THRESHOLD = 3;    // 减少匹配频率
+    private static final int LOST_FRAME_THRESHOLD = STABLE_FRAME_THRESHOLD * 2;      // * 帧数 减少检测框闪烁
+    private static final long MATCH_COOLDOWN_MS = 0;      // 给特征缓存更多时间
 
     // ==================== UI 组件 ====================
     private CameraPreviewLayout cameraPreviewLayout;
@@ -96,6 +97,7 @@ public class TemplateTestActivity extends AppCompatActivity {
     private volatile boolean isMatching = false;
     private int stableFrameCounter = 0;
     private int lostFrameCounter = 0;  // 检测丢失帧计数
+    private volatile boolean hasMatchFailure = false;  // 匹配失败标记，由processFrame统一处理
     private double autoMatchThreshold = 0.95;
 
     // ==================== 帧数据缓冲 ====================
@@ -118,35 +120,6 @@ public class TemplateTestActivity extends AppCompatActivity {
 
     private volatile MatchMode currentMatchMode = MatchMode.COARSE;
 
-    /**
-     * 统一的校正结果
-     */
-    private static class CorrectionData {
-        Mat correctedMat;
-        Mat inverseMatrix;
-        PointF[] templateCornersInImage;  // 模板在原图中的四角坐标（用于显示检测框）
-        MatchResult cachedMatchResult;    // 缓存的匹配结果，避免重复匹配
-
-        CorrectionData(Mat correctedMat, Mat inverseMatrix, PointF[] templateCornersInImage) {
-            this.correctedMat = correctedMat;
-            this.inverseMatrix = inverseMatrix;
-            this.templateCornersInImage = templateCornersInImage;
-            this.cachedMatchResult = null;
-        }
-
-        CorrectionData(Mat correctedMat, Mat inverseMatrix, PointF[] templateCornersInImage, MatchResult cachedMatchResult) {
-            this.correctedMat = correctedMat;
-            this.inverseMatrix = inverseMatrix;
-            this.templateCornersInImage = templateCornersInImage;
-            this.cachedMatchResult = cachedMatchResult;
-        }
-
-        void release() {
-            if (correctedMat != null) correctedMat.release();
-            if (inverseMatrix != null) inverseMatrix.release();
-            if (cachedMatchResult != null) cachedMatchResult.release();
-        }
-    }
 
     // ==================== 生命周期 ====================
 
@@ -298,6 +271,7 @@ public class TemplateTestActivity extends AppCompatActivity {
 
         // 完全清理之前的匹配结果和相关状态
         releaseMatchResult();
+        hasMatchFailure = false;  // 重置匹配失败标记
 
         runOnUiThread(() -> {
             cameraPreviewLayout.hideDetectionBox();
@@ -341,15 +315,18 @@ public class TemplateTestActivity extends AppCompatActivity {
 
             // 根据模式判断触发条件
             boolean shouldTriggerMatch = evaluateTriggerCondition(image, rotationDegrees, rotatedWidth, rotatedHeight);
-            if (!shouldTriggerMatch) {
+
+            // 统一处理所有类型的失败（检测失败 + 匹配失败）
+            if (hasMatchFailure) {
                 lostFrameCounter++;
-                // 连续多帧检测失败才隐藏检测框和ROI，避免闪烁
+                // 连续多帧失败才隐藏检测框和ROI，避免闪烁
                 if (lostFrameCounter >= LOST_FRAME_THRESHOLD) {
                     lastDetectionResult = null;
+                    lostFrameCounter = 0;  // 重置丢失计数
+                    hasMatchFailure = false;  // 重置匹配失败标记
+                    Log.e(TAG, ">> LOST_FRAME_THRESHOLD 检测已丢失");
                     runOnUiThread(this::showNoMatchState);
                 }
-            } else {
-                lostFrameCounter = 0;  // 重置丢失计数
             }
             if (shouldTriggerMatch && !isMatching) {
                 // 复制帧数据给异步线程
@@ -397,6 +374,7 @@ public class TemplateTestActivity extends AppCompatActivity {
                 }
             }
             // 未检测到，累计丢失帧
+            hasMatchFailure = true;
             stableFrameCounter = 0;
             return false;
 
@@ -421,9 +399,6 @@ public class TemplateTestActivity extends AppCompatActivity {
         final int rotatedW = (rotationDegrees == 90 || rotationDegrees == 270) ? height : width;
         final int rotatedH = (rotationDegrees == 90 || rotationDegrees == 270) ? width : height;
 
-        MLog.d(TAG, String.format(">> 开始匹配: 模式=%s, 尺寸=%dx%d, 旋转=%d°",
-                currentMatchMode.name(), rotatedW, rotatedH, rotationDegrees));
-
         new Thread(() -> {
             long startTime = System.currentTimeMillis();
             Mat colorMat = null;
@@ -444,7 +419,6 @@ public class TemplateTestActivity extends AppCompatActivity {
 
                 rotatedMat = ImageEnhancer.rotateMat(colorMat, rotationDegrees);
                 long preprocessTime = System.currentTimeMillis() - preprocessStart;
-                MLog.d(TAG, String.format(">> 图像预处理耗时: %dms", preprocessTime));
 
                 // 2. 根据模式执行校正（差异点）
                 long correctionStart = System.currentTimeMillis();
@@ -452,13 +426,21 @@ public class TemplateTestActivity extends AppCompatActivity {
                 long correctionTime = System.currentTimeMillis() - correctionStart;
 
                 if (correction == null || correction.correctedMat == null) {
-                    MLog.w(TAG, String.format(">> 图像校正或匹配失败: 模式=%s, 耗时=%dms",
-                            currentMatchMode.name(), correctionTime));
                     handleMatchFailure();
                     return;
                 }
-                MLog.d(TAG, String.format(">> 图像校正或匹配成功: 模式=%s, 耗时=%dms",
-                        currentMatchMode.name(), correctionTime));
+                // 2.5. COARSE模式提前显示检测框（优化用户体验）
+                if (currentMatchMode == MatchMode.COARSE && correction.templateCornersInImage != null) {
+                    final PointF[] earlyTemplateCorners = correction.templateCornersInImage;
+                    runOnUiThread(() -> {
+                        cameraPreviewLayout.setFillCenterCoordinates(rotatedW, rotatedH, rotatedW, rotatedH);
+                        RectF earlyBounds = calculateBoundsFromCorners(earlyTemplateCorners);
+                        cameraPreviewLayout.showDetectionBox(earlyBounds, earlyTemplateCorners);
+                        // 暂时显示中等置信度，等待实际匹配结果
+                        cameraPreviewLayout.updateConfidence(0.7);
+                    });
+                    MLog.d(TAG, ">> COARSE模式：提前显示检测框");
+                }
 
                 // 3. 统一的模板匹配（优化：使用缓存结果避免重复匹配）
                 long matchStart = System.currentTimeMillis();
@@ -469,50 +451,33 @@ public class TemplateTestActivity extends AppCompatActivity {
                     MLog.d(TAG, ">> 使用缓存匹配结果，跳过重复匹配");
                 } else {
                     // 执行实际匹配（主要用于标签检测模式）
-                    newResult = isMultiTemplateMode ?
-                            matchingService.matchAllFromMat(correction.correctedMat) :
-                            matchingService.matchTemplateFromMat(correction.correctedMat, templateId);
+                    newResult = isMultiTemplateMode ? matchingService.matchAllFromMat(correction.correctedMat) : matchingService.matchTemplateFromMat(correction.correctedMat, templateId);
                 }
                 long matchTime = System.currentTimeMillis() - matchStart;
 
                 if (!newResult.isSuccess()) {
-                    MLog.w(TAG, String.format(">> 模板匹配失败: %s, 耗时=%dms",
-                            newResult.getErrorMessage(), matchTime));
+                    MLog.w(TAG, String.format(">> 模板匹配失败: %s, 耗时=%dms", newResult.getErrorMessage(), matchTime));
                     handleMatchFailure();
                     return;
                 }
 
-                MLog.d(TAG, String.format(">> 模板匹配成功: confidence=%.3f, 耗时=%dms",
-                        newResult.getConfidence(), matchTime));
+                MLog.d(TAG, String.format(">> 模板匹配成功: confidence=%.3f, 耗时=%dms", newResult.getConfidence(), matchTime));
 
+                hasMatchFailure = false;//匹配成功重置标识
                 // 关键修复：对于全图模式，重新计算正确的transformedRegions
                 if (currentMatchMode == MatchMode.COARSE && correction.inverseMatrix != null) {
                     correctionStart = System.currentTimeMillis();
-                    List<MatchResult.TransformedRegion> correctedRegions =
-                            recalculateTransformedRegions(newResult.getTemplate(), correction.inverseMatrix, rotatedW, rotatedH);
+                    List<MatchResult.TransformedRegion> correctedRegions = recalculateTransformedRegions(newResult.getTemplate(), correction.inverseMatrix, rotatedW, rotatedH);
 
                     if (!correctedRegions.isEmpty()) {
                         // 创建修正后的MatchResult
-                        MatchResult correctedResult = new MatchResult.Builder()
-                                .setSuccess(true)
-                                .setTemplate(newResult.getTemplate())
-                                .setConfidence(newResult.getConfidence())
-                                .setInlierRatio(newResult.getInlierRatio())
-                                .setMatchCount(newResult.getMatchCount())
-                                .setAvgDistance(newResult.getAvgDistance())
-                                .setHomography(newResult.getHomography() != null ? newResult.getHomography().clone() : null)
-                                .setTransformedRegions(correctedRegions)
-                                .setTemplateCornersInImage(newResult.getTemplateCornersInImage())
-                                .setTemplateBoundsInImage(newResult.getTemplateBoundsInImage())
-                                .setMatchTimeMs(newResult.getMatchTimeMs())
-                                .build();
+                        MatchResult correctedResult = new MatchResult.Builder().setSuccess(true).setTemplate(newResult.getTemplate()).setConfidence(newResult.getConfidence()).setInlierRatio(newResult.getInlierRatio()).setMatchCount(newResult.getMatchCount()).setAvgDistance(newResult.getAvgDistance()).setHomography(newResult.getHomography() != null ? newResult.getHomography().clone() : null).setTransformedRegions(correctedRegions).setTemplateCornersInImage(newResult.getTemplateCornersInImage()).setTemplateBoundsInImage(newResult.getTemplateBoundsInImage()).setMatchTimeMs(newResult.getMatchTimeMs()).build();
 
                         newResult.release();
                         newResult = correctedResult;
 
                         correctionTime = System.currentTimeMillis() - correctionStart;
-                        MLog.d(TAG, String.format(">> ROI坐标修正完成: 区域数=%d, 耗时=%dms",
-                                correctedRegions.size(), correctionTime));
+                        MLog.d(TAG, String.format(">> ROI坐标修正完成: 区域数=%d, 耗时=%dms", correctedRegions.size(), correctionTime));
                     }
                 }
 
@@ -535,8 +500,7 @@ public class TemplateTestActivity extends AppCompatActivity {
                 correction.inverseMatrix = null; // 防止 finally 释放
 
                 long totalTime = System.currentTimeMillis() - startTime;
-                MLog.d(TAG, String.format(">> 匹配流程完成: 总耗时=%dms (预处理=%d, 校正=%d, 匹配=%d, 识别=%d)",
-                        totalTime, preprocessTime, correctionTime, matchTime, recognitionTime));
+                MLog.d(TAG, String.format(">> 匹配流程完成: 总耗时=%dms (预处理=%d, 校正=%d, 匹配=%d, 识别=%d)", totalTime, preprocessTime, correctionTime, matchTime, recognitionTime));
 
                 runOnUiThread(() -> {
                     releaseMatchResult();
@@ -546,13 +510,11 @@ public class TemplateTestActivity extends AppCompatActivity {
                     lastRotatedWidth = rotatedW;
                     lastRotatedHeight = rotatedH;
 
-                    // COARSE 模式：设置坐标系统并显示检测框
+                    // COARSE 模式：更新检测框置信度（如果已提前显示）
                     // LABEL_DETECTION 模式：保持 evaluateTriggerCondition 设置的坐标系统，避免检测框闪烁
                     if (currentMatchMode == MatchMode.COARSE) {
-                        cameraPreviewLayout.setFillCenterCoordinates(rotatedW, rotatedH, rotatedW, rotatedH);
+                        // 检测框已在步骤2.5中提前显示，这里只更新置信度
                         if (templateCorners != null) {
-                            RectF bounds = calculateBoundsFromCorners(templateCorners);
-                            cameraPreviewLayout.showDetectionBox(bounds, templateCorners);
                             cameraPreviewLayout.updateConfidence(resultToShow.getConfidence());
                         }
                     }
@@ -580,8 +542,10 @@ public class TemplateTestActivity extends AppCompatActivity {
     }
 
     private void handleMatchFailure() {
-        runOnUiThread(this::showNoMatchState);
+        // 不直接更新UI，而是设置失败标记，让processFrame统一处理
+        hasMatchFailure = true;
         isMatching = false;
+        MLog.d(TAG, ">> 匹配失败，标记为失败状态，等待统一处理");
     }
 
     /**
@@ -597,12 +561,7 @@ public class TemplateTestActivity extends AppCompatActivity {
         try {
             for (TemplateRegion region : template.getRegions()) {
                 // 使用正确的逆变换矩阵计算ROI坐标
-                MatOfPoint2f srcCorners = new MatOfPoint2f(
-                        new Point(region.getBoundLeft(), region.getBoundTop()),
-                        new Point(region.getBoundRight(), region.getBoundTop()),
-                        new Point(region.getBoundRight(), region.getBoundBottom()),
-                        new Point(region.getBoundLeft(), region.getBoundBottom())
-                );
+                MatOfPoint2f srcCorners = new MatOfPoint2f(new Point(region.getBoundLeft(), region.getBoundTop()), new Point(region.getBoundRight(), region.getBoundTop()), new Point(region.getBoundRight(), region.getBoundBottom()), new Point(region.getBoundLeft(), region.getBoundBottom()));
 
                 MatOfPoint2f dstCorners = new MatOfPoint2f();
                 Core.perspectiveTransform(srcCorners, dstCorners, inverseMatrix);
@@ -618,15 +577,12 @@ public class TemplateTestActivity extends AppCompatActivity {
 
                     // 验证变换后的区域
                     if (isValidTransformedRegion(bounds, transformedCorners, imageWidth, imageHeight)) {
-                        MatchResult.TransformedRegion transformedRegion =
-                                new MatchResult.TransformedRegion(region, bounds, transformedCorners);
+                        MatchResult.TransformedRegion transformedRegion = new MatchResult.TransformedRegion(region, bounds, transformedCorners);
                         correctedRegions.add(transformedRegion);
 
-                        MLog.d(TAG, String.format(">> ROI坐标修正: %s -> (%.1f,%.1f,%.1f,%.1f)",
-                                region.getName(), bounds.left, bounds.top, bounds.right, bounds.bottom));
+                        MLog.d(TAG, String.format(">> ROI坐标修正: %s -> (%.1f,%.1f,%.1f,%.1f)", region.getName(), bounds.left, bounds.top, bounds.right, bounds.bottom));
                     } else {
-                        MLog.w(TAG, String.format(">> ROI区域变换失败: %s, 边界[%.1f,%.1f,%.1f,%.1f]",
-                                region.getName(), bounds.left, bounds.top, bounds.right, bounds.bottom));
+                        MLog.w(TAG, String.format(">> ROI区域变换失败: %s, 边界[%.1f,%.1f,%.1f,%.1f]", region.getName(), bounds.left, bounds.top, bounds.right, bounds.bottom));
                     }
                 }
 
@@ -665,8 +621,7 @@ public class TemplateTestActivity extends AppCompatActivity {
         }
 
         try {
-            MLog.d(TAG, String.format(">> >> 标签检测模式: 使用已有检测结果, 置信度=%.3f",
-                    lastDetectionResult.getConfidence()));
+            MLog.d(TAG, String.format(">> >> 标签检测模式: 使用已有检测结果, 置信度=%.3f", lastDetectionResult.getConfidence()));
 
             // 获取检测结果的角点信息
             PointF[] corners = lastDetectionResult.getOriginalCornerPoints();
@@ -680,19 +635,13 @@ public class TemplateTestActivity extends AppCompatActivity {
             int modelWidth = lastDetectionResult.getModelWidth();
             int modelHeight = lastDetectionResult.getModelHeight();
 
-            MatOfPoint2f srcPoints = new MatOfPoint2f(
-                    new org.opencv.core.Point(corners[0].x, corners[0].y),  // topLeft
+            MatOfPoint2f srcPoints = new MatOfPoint2f(new org.opencv.core.Point(corners[0].x, corners[0].y),  // topLeft
                     new org.opencv.core.Point(corners[1].x, corners[1].y),  // topRight
                     new org.opencv.core.Point(corners[2].x, corners[2].y),  // bottomRight
                     new org.opencv.core.Point(corners[3].x, corners[3].y)   // bottomLeft
             );
 
-            MatOfPoint2f dstPoints = new MatOfPoint2f(
-                    new org.opencv.core.Point(0, 0),
-                    new org.opencv.core.Point(modelWidth, 0),
-                    new org.opencv.core.Point(modelWidth, modelHeight),
-                    new org.opencv.core.Point(0, modelHeight)
-            );
+            MatOfPoint2f dstPoints = new MatOfPoint2f(new org.opencv.core.Point(0, 0), new org.opencv.core.Point(modelWidth, 0), new org.opencv.core.Point(modelWidth, modelHeight), new org.opencv.core.Point(0, modelHeight));
 
             Mat perspectiveMatrix = Imgproc.getPerspectiveTransform(srcPoints, dstPoints);
             Mat inverse = perspectiveMatrix.inv();
@@ -724,28 +673,23 @@ public class TemplateTestActivity extends AppCompatActivity {
         int maxDim = Math.max(rotatedMat.cols(), rotatedMat.rows());
         float scale = maxDim > MATCH_MAX_DIMENSION ? (float) MATCH_MAX_DIMENSION / maxDim : 1f;
 
-        MLog.d(TAG, String.format(">> >> Homography校正: 原始尺寸=%dx%d, 缩放比例=%.3f",
-                rotatedMat.cols(), rotatedMat.rows(), scale));
+        MLog.d(TAG, String.format(">> >> Homography校正: 原始尺寸=%dx%d, 缩放比例=%.3f", rotatedMat.cols(), rotatedMat.rows(), scale));
 
         Mat scaledMat = rotatedMat;
         if (scale < 1f) {
             scaledMat = new Mat();
             Imgproc.resize(rotatedMat, scaledMat, new Size(rotatedMat.cols() * scale, rotatedMat.rows() * scale));
-            MLog.d(TAG, String.format(">> >> 图像缩放: %dx%d -> %dx%d",
-                    rotatedMat.cols(), rotatedMat.rows(), scaledMat.cols(), scaledMat.rows()));
+            MLog.d(TAG, String.format(">> >> 图像缩放: %dx%d -> %dx%d", rotatedMat.cols(), rotatedMat.rows(), scaledMat.cols(), scaledMat.rows()));
         }
 
         try {
             // 在缩放图上进行特征匹配（快速）
             long matchStart = System.currentTimeMillis();
-            MatchResult matchResult = isMultiTemplateMode ?
-                    matchingService.matchAllFromMat(scaledMat) :
-                    matchingService.matchTemplateFromMat(scaledMat, templateId);
+            MatchResult matchResult = isMultiTemplateMode ? matchingService.matchAllFromMat(scaledMat) : matchingService.matchTemplateFromMat(scaledMat, templateId);
             long matchTime = System.currentTimeMillis() - matchStart;
 
             if (!matchResult.isSuccess()) {
-                MLog.w(TAG, String.format(">> >> 特征匹配失败: %s, 耗时=%dms",
-                        matchResult.getErrorMessage(), matchTime));
+                MLog.w(TAG, String.format(">> >> 特征匹配失败: %s, 耗时=%dms", matchResult.getErrorMessage(), matchTime));
                 if (scaledMat != rotatedMat) scaledMat.release();
                 matchResult.release();
                 return null;
@@ -763,8 +707,7 @@ public class TemplateTestActivity extends AppCompatActivity {
 
             int dstWidth = matchedTemplate.getImageWidth();
             int dstHeight = matchedTemplate.getImageHeight();
-            MLog.d(TAG, String.format(">> >> 匹配成功: 模板=%s, 尺寸=%dx%d, 置信度=%.3f, 耗时=%dms",
-                    matchedTemplate.getName(), dstWidth, dstHeight, matchResult.getConfidence(), matchTime));
+            MLog.d(TAG, String.format(">> >> 匹配成功: 模板=%s, 尺寸=%dx%d, 置信度=%.3f, 耗时=%dms", matchedTemplate.getName(), dstWidth, dstHeight, matchResult.getConfidence(), matchTime));
 
             // 调整Homography到原图坐标系（修复：正确的坐标变换逻辑）
             Mat adjustedHomography = homography;
@@ -808,12 +751,16 @@ public class TemplateTestActivity extends AppCompatActivity {
             // 关键修复：重新计算ROI坐标，确保使用原图坐标系
             Mat originalClone = rotatedMat.clone();
 
+            // 优化：缓存匹配结果，避免重复匹配
+            // 注意：matchResult是基于缩放图的，但Homography已调整到原图坐标系
+            // 后续的transformedRegions会在triggerMatch中重新计算
+            MLog.d(TAG, ">> >> 缓存匹配结果，避免重复匹配");
+
             // 清理资源
             if (scaledMat != rotatedMat) scaledMat.release();
 
-            // 返回结果，不使用缓存的matchResult，让后续流程重新计算transformedRegions
-            // 这样可以确保使用正确的adjustedHomography进行坐标变换
-            return new CorrectionData(originalClone, inverse, templateCornersInImage);
+            // 返回结果，包含缓存的匹配结果
+            return new CorrectionData(originalClone, inverse, templateCornersInImage, matchResult);
 
         } catch (Exception e) {
             MLog.e(TAG, ">> >> Homography校正异常", e);
@@ -872,7 +819,7 @@ public class TemplateTestActivity extends AppCompatActivity {
             double imageArea = imageWidth * imageHeight;
             double areaRatio = quadArea / imageArea;
 
-            if (areaRatio < 0.01 || areaRatio > 0.95) { // 面积应在1%-80%之间
+            if (areaRatio < 0.008 || areaRatio > 1.2) { // 面积应在1%-80%之间
                 MLog.d(TAG, String.format(">> >> 四边形面积比例不合理: %.3f", areaRatio));
                 return false;
             }
@@ -883,8 +830,7 @@ public class TemplateTestActivity extends AppCompatActivity {
             double aspectRatioDeviation = Math.abs(quadAspectRatio - templateAspectRatio) / templateAspectRatio;
 
             if (aspectRatioDeviation > 0.5) { // 长宽比偏差不超过50%
-                MLog.d(TAG, String.format(">> >> 长宽比偏差过大: 模板=%.2f, 检测=%.2f, 偏差=%.1f%%",
-                        templateAspectRatio, quadAspectRatio, aspectRatioDeviation * 100));
+                MLog.d(TAG, String.format(">> >> 长宽比偏差过大: 模板=%.2f, 检测=%.2f, 偏差=%.1f%%", templateAspectRatio, quadAspectRatio, aspectRatioDeviation * 100));
                 return false;
             }
 
@@ -1127,8 +1073,7 @@ public class TemplateTestActivity extends AppCompatActivity {
                 // 直接使用，无需再次变换
                 displayCorners = corners;
 
-                MLog.d(TAG, String.format(">> 全图模式ROI: 使用已变换坐标(%.1f,%.1f)",
-                        corners[0].x, corners[0].y));
+                MLog.d(TAG, String.format(">> 全图模式ROI: 使用已变换坐标(%.1f,%.1f)", corners[0].x, corners[0].y));
 
             } else {
                 // 标签检测模式：需要将模板坐标变换到检测坐标系
@@ -1145,17 +1090,11 @@ public class TemplateTestActivity extends AppCompatActivity {
                     displayCorners[i] = new PointF(corners[i].x * scaleX, corners[i].y * scaleY);
                 }
 
-                MLog.d(TAG, String.format(">> 标签检测模式ROI: 模板坐标(%.1f,%.1f) -> 检测坐标(%.1f,%.1f), 缩放(%.3f,%.3f)",
-                        corners[0].x, corners[0].y, displayCorners[0].x, displayCorners[0].y, scaleX, scaleY));
+                MLog.d(TAG, String.format(">> 标签检测模式ROI: 模板坐标(%.1f,%.1f) -> 检测坐标(%.1f,%.1f), 缩放(%.3f,%.3f)", corners[0].x, corners[0].y, displayCorners[0].x, displayCorners[0].y, scaleX, scaleY));
             }
 
             RectF displayBounds = calculateBoundsFromCorners(displayCorners);
-            overlayRegions.add(new OverlayView.ContentRegion(
-                    String.valueOf(region.getRegion().getId()),
-                    displayBounds,
-                    displayCorners,
-                    region.getRegion().getName(),
-                    region.hasContent()));
+            overlayRegions.add(new OverlayView.ContentRegion(String.valueOf(region.getRegion().getId()), displayBounds, displayCorners, region.getRegion().getName(), region.hasContent()));
         }
 
         cameraPreviewLayout.setContentRegions(overlayRegions);

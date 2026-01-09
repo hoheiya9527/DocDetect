@@ -40,8 +40,8 @@ public class OverlayView extends View {
     private static final float STROKE_WIDTH_CONTENT = 3f;
     private static final float CORNER_RADIUS = 8f;
 
-    // invalidate 节流：最小间隔 16ms（约 60fps）
-    private static final long MIN_INVALIDATE_INTERVAL_MS = 16;
+    // invalidate 节流：降低到30fps，减少GPU压力，防止内存损坏
+    private static final long MIN_INVALIDATE_INTERVAL_MS = 33;
 
     // Paint对象
     private Paint detectionBoxPaint;
@@ -298,33 +298,39 @@ public class OverlayView extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
+        try {
+            super.onDraw(canvas);
 
-        // 创建数据的本地副本，避免渲染过程中数据被修改导致 GPU 驱动崩溃
-        RectF localDetectionBox;
-        PointF[] localDetectionCorners;
-        float localDetectionAlpha;
-        float localScaleX, localScaleY;
-        int localOffsetX, localOffsetY;
-        List<ContentRegion> localContentRegions;
+            // 创建数据的本地副本，避免渲染过程中数据被修改导致 GPU 驱动崩溃
+            RectF localDetectionBox;
+            PointF[] localDetectionCorners;
+            float localDetectionAlpha;
+            float localScaleX, localScaleY;
+            int localOffsetX, localOffsetY;
+            List<ContentRegion> localContentRegions;
 
-        synchronized (dataLock) {
-            localDetectionBox = detectionBox != null ? new RectF(detectionBox) : null;
-            localDetectionCorners = detectionCorners != null ? copyCorners(detectionCorners) : null;
-            localDetectionAlpha = detectionAlpha;
-            localScaleX = scaleX;
-            localScaleY = scaleY;
-            localOffsetX = offsetX;
-            localOffsetY = offsetY;
-            localContentRegions = new ArrayList<>(contentRegions);
+            synchronized (dataLock) {
+                localDetectionBox = detectionBox != null ? new RectF(detectionBox) : null;
+                localDetectionCorners = detectionCorners != null ? copyCorners(detectionCorners) : null;
+                localDetectionAlpha = detectionAlpha;
+                localScaleX = scaleX;
+                localScaleY = scaleY;
+                localOffsetX = offsetX;
+                localOffsetY = offsetY;
+                localContentRegions = new ArrayList<>(contentRegions);
+            }
+
+            // 绘制检测框
+            drawDetectionBox(canvas, localDetectionBox, localDetectionCorners, localDetectionAlpha, localScaleX, localScaleY, localOffsetX, localOffsetY);
+            // 绘制内容区域
+            drawContentRegions(canvas, localContentRegions, localScaleX, localScaleY, localOffsetX, localOffsetY);
+            // 绘制对焦动画
+            drawFocusAnimation(canvas);
+            
+        } catch (Exception e) {
+            // 防止GPU渲染异常导致崩溃
+            android.util.Log.e("OverlayView", ">> onDraw异常，跳过本次绘制", e);
         }
-
-        // 绘制检测框
-        drawDetectionBox(canvas, localDetectionBox, localDetectionCorners, localDetectionAlpha, localScaleX, localScaleY, localOffsetX, localOffsetY);
-        // 绘制内容区域
-        drawContentRegions(canvas, localContentRegions, localScaleX, localScaleY, localOffsetX, localOffsetY);
-        // 绘制对焦动画
-        drawFocusAnimation(canvas);
     }
 
     /**
@@ -347,13 +353,21 @@ public class OverlayView extends View {
         if (now - lastInvalidateTime >= MIN_INVALIDATE_INTERVAL_MS) {
             lastInvalidateTime = now;
             pendingInvalidate = false;
-            postInvalidate();
+            try {
+                postInvalidate();
+            } catch (Exception e) {
+                android.util.Log.e("OverlayView", ">> postInvalidate异常", e);
+            }
         } else if (!pendingInvalidate) {
             pendingInvalidate = true;
             postDelayed(() -> {
-                pendingInvalidate = false;
-                lastInvalidateTime = System.currentTimeMillis();
-                invalidate();
+                try {
+                    pendingInvalidate = false;
+                    lastInvalidateTime = System.currentTimeMillis();
+                    invalidate();
+                } catch (Exception e) {
+                    android.util.Log.e("OverlayView", ">> 延迟invalidate异常", e);
+                }
             }, MIN_INVALIDATE_INTERVAL_MS - (now - lastInvalidateTime));
         }
     }
